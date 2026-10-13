@@ -359,7 +359,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 13:36 VN
 - **Branch:** `feature/uiux-redesign-v2`
-- **Commit:** Pending
+- **Commit:** `669a441`
 - **Visual Snapshot:** `docs/redesign_screenshots/09_bulk_import_v2.png` (70 KB, chuẩn thiết kế mockup `09_nhap_excel.png`).
 - **Command 1:** `pytest tests/test_ux10_bulk_import_wizard.py -v`
 - **Kết quả Command 1:**

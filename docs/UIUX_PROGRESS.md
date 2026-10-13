@@ -402,7 +402,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-10 — Bulk Import Wizard 2.0 (`bulk_import_dialog.py`)
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 13:30 — 13/10/2026 13:36
-- **Baseline SHA / Commit SHA:** `656d906` / Pending
+- **Baseline SHA / Commit SHA:** `656d906` / `669a441`
 - **Scope and no-go changes:**
   - Nâng cấp Trình Nhập lịch hàng loạt từ Excel / CSV thành Wizard 3 bước hiện đại bám sát Mockup `09_nhap_excel.png`:
     1. **Thanh chỉ báo tiến trình 3 bước (Stepper Indicator):**
