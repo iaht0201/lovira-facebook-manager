@@ -357,7 +357,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-09 — Media Library & Video Downloader 2.0 (`video_workspace.py`)
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 13:16 — 13/10/2026 13:28
-- **Baseline SHA / Commit SHA:** `291d902` / `PENDING_COMMIT`
+- **Baseline SHA / Commit SHA:** `291d902` / `1cd83b6`
 - **Scope and no-go changes:**
   - Nâng cấp Trình Tải Video & Thư viện Media 2.0 bám sát 2 Mockups `05_thu_vien_media.png` & `08_tai_video.png`:
     1. **Tab 1 — Tải Video 2.0 (`VideoDownloadTab`):**

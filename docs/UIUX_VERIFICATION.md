@@ -324,7 +324,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 13:28 VN
 - **Branch:** `feature/uiux-redesign-v2`
-- **Commit:** `PENDING_COMMIT`
+- **Commit:** `1cd83b6`
 - **Visual Snapshots:**
   - `docs/redesign_screenshots/05_media_library_v2.png` (83 KB, chuẩn thiết kế mockup `05_thu_vien_media.png`).
   - `docs/redesign_screenshots/08_video_download_v2.png` (110 KB, chuẩn thiết kế mockup `08_tai_video.png`).
