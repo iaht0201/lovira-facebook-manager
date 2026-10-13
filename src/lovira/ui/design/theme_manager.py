@@ -226,6 +226,85 @@ QComboBox QAbstractItemView {{
     padding: 6px;
 }}
 
+/* 4.1. Calendar Widget (Hộp chọn ngày popup) */
+QCalendarWidget {{
+    background-color: {c.bg_canvas};
+    border: 1px solid {c.border_subtle};
+    border-radius: {s.radius_md}px;
+}}
+
+QCalendarWidget QWidget {{
+    alternate-background-color: {c.bg_surface};
+    background-color: {c.bg_canvas};
+    color: {c.text_primary};
+}}
+
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background-color: {c.bg_surface};
+    border-bottom: 1px solid {c.border_subtle};
+    min-height: 36px;
+}}
+
+QCalendarWidget QToolButton {{
+    color: {c.text_primary};
+    background-color: transparent;
+    border-radius: {s.radius_sm}px;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 4px 8px;
+    margin: 2px;
+}}
+
+QCalendarWidget QToolButton:hover {{
+    background-color: {c.border_subtle};
+}}
+
+QCalendarWidget QMenu {{
+    background-color: {c.bg_surface};
+    color: {c.text_primary};
+    border: 1px solid {c.border_subtle};
+    border-radius: {s.radius_md}px;
+    padding: 4px;
+}}
+
+QCalendarWidget QSpinBox {{
+    background-color: {c.bg_canvas};
+    color: {c.text_primary};
+    border: 1px solid {c.border_subtle};
+    border-radius: {s.radius_sm}px;
+    padding: 2px 4px;
+}}
+
+QCalendarWidget QTableView {{
+    background-color: {c.bg_canvas};
+    selection-background-color: {c.accent_default};
+    selection-color: #FFFFFF;
+    color: {c.text_primary};
+    font-size: 12px;
+    outline: none;
+    border: none;
+}}
+
+QCalendarWidget QAbstractItemView:enabled {{
+    color: {c.text_primary};
+    background-color: {c.bg_canvas};
+    selection-background-color: {c.accent_default};
+    selection-color: #FFFFFF;
+}}
+
+QCalendarWidget QAbstractItemView:disabled {{
+    color: {c.text_muted};
+}}
+
+QCalendarWidget QHeaderView::section {{
+    background-color: {c.bg_surface};
+    color: {c.accent_default};
+    font-weight: 700;
+    font-size: 11px;
+    border: none;
+    padding: 4px 0px;
+}}
+
 /* 5. Buttons (Đơn nhất, loại bỏ trùng lặp - A-08) */
 QPushButton {{
     background-color: {c.bg_elevated};

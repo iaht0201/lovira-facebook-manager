@@ -84,6 +84,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QMenu,
     QDateTimeEdit,
+    QCalendarWidget,
     QSpinBox,
     QButtonGroup,
     QToolButton,
@@ -2757,6 +2758,74 @@ class BatchComposeDialog(QDialog):
                 border: none;
                 padding: 4px;
             }
+            /* QCalendarWidget Dark Styling */
+            QCalendarWidget {
+                background-color: #0B111D;
+                border: 1px solid #2B3D59;
+                border-radius: 8px;
+            }
+            QCalendarWidget QWidget {
+                alternate-background-color: #131D2E;
+                background-color: #0B111D;
+                color: #F1F5F9;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background-color: #131D2E;
+                border-bottom: 1px solid #1E2D47;
+                min-height: 36px;
+            }
+            QCalendarWidget QToolButton {
+                color: #F1F5F9;
+                background-color: transparent;
+                border-radius: 4px;
+                font-weight: 700;
+                font-size: 12px;
+                padding: 4px 8px;
+                margin: 2px;
+            }
+            QCalendarWidget QToolButton:hover {
+                background-color: #1E2D47;
+            }
+            QCalendarWidget QMenu {
+                background-color: #131D2E;
+                color: #F1F5F9;
+                border: 1px solid #24344D;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QCalendarWidget QSpinBox {
+                background-color: #0B111D;
+                color: #F1F5F9;
+                border: 1px solid #24344D;
+                border-radius: 4px;
+                padding: 2px 4px;
+            }
+            QCalendarWidget QTableView {
+                background-color: #0B111D;
+                selection-background-color: #6258E8;
+                selection-color: #FFFFFF;
+                color: #F1F5F9;
+                font-size: 12px;
+                outline: none;
+                border: none;
+            }
+            QCalendarWidget QAbstractItemView:enabled {
+                color: #F1F5F9;
+                background-color: #0B111D;
+                selection-background-color: #6258E8;
+                selection-color: #FFFFFF;
+            }
+            QCalendarWidget QAbstractItemView:disabled {
+                color: #475569;
+            }
+            QCalendarWidget QHeaderView::section {
+                background-color: #131D2E;
+                color: #818CF8;
+                font-weight: 700;
+                font-size: 11px;
+                border: none;
+                padding: 4px 0px;
+            }
             QPushButton#primaryBtn {
                 background-color: #6258E8;
                 color: #FFFFFF;
@@ -2858,13 +2927,13 @@ class BatchComposeDialog(QDialog):
         cb_layout.setSpacing(8)
 
         cb_head = QHBoxLayout()
-        cb_title = QLabel("2. TIÊU ĐỀ & HASHTAG BÀI ĐĂNG")
+        cb_title = QLabel("2. TIÊU ĐỀ && HASHTAG BÀI ĐĂNG")
         cb_title.setStyleSheet("font-size: 12px; font-weight: 700; color: #6258E8;")
         cb_head.addWidget(cb_title)
         cb_head.addStretch()
         cb_layout.addLayout(cb_head)
 
-        self.cb_use_original_titles = QCheckBox("Giữ nguyên Tiêu đề & Hashtag riêng của từng video khi đăng bài (Khuyên dùng)")
+        self.cb_use_original_titles = QCheckBox("Giữ nguyên Tiêu đề && Hashtag riêng của từng video khi đăng bài (Khuyên dùng)")
         self.cb_use_original_titles.setChecked(True)
         self.cb_use_original_titles.setStyleSheet("color: #10B981; font-weight: 600; font-size: 12px;")
         self.cb_use_original_titles.toggled.connect(self._update_preview_table)
@@ -2901,6 +2970,9 @@ class BatchComposeDialog(QDialog):
         self.start_dt = QDateTimeEdit(QDateTime.currentDateTime().addSecs(15 * 60))
         self.start_dt.setDisplayFormat("dd/MM/yyyy HH:mm")
         self.start_dt.setCalendarPopup(True)
+        cal = self.start_dt.calendarWidget()
+        if cal:
+            cal.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         time_row.addWidget(self.start_dt)
 
         time_row.addWidget(QLabel("Giãn cách giữa các bài:"))
