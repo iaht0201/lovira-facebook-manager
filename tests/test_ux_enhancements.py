@@ -152,12 +152,7 @@ def test_bulk_import_dialog_export_and_process(qapp, temp_db, tmp_path):
         dlg._start_import_process()
         worker = dlg.worker
         if worker:
-            for _ in range(100):
-                if not worker.isRunning():
-                    break
-                qapp.processEvents()
-                import time
-                time.sleep(0.02)
+            worker.wait(5000)
         qapp.processEvents()
 
     # Kiểm tra job trong database

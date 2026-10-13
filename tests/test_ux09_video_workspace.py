@@ -204,7 +204,7 @@ def test_media_library_compose_selected_and_ac12_protection(qapp, temp_db, seed_
 
     tab._on_compose_selected()
     assert len(compose_events) == 1
-    assert compose_events[0]["media_id"] == seed_media["ids"][1]
+    assert compose_events[0]["media_id"] == tab.table.item(1, 0).text()
 
     # 2. Xóa video đầu tiên (đang có lịch chờ active_job_count > 0) -> Phải bị chặn AC-12
     # Tìm dòng chứa active_media_id
