@@ -97,7 +97,7 @@ class ScheduleWorkspaceView(QWidget):
         self.btn_refresh.clicked.connect(self.reload_schedules)
         header_row.addWidget(self.btn_refresh)
 
-        btn_new_schedule = QPushButton(" + Lên lịch bài mới")
+        btn_new_schedule = QPushButton(" Lên lịch bài mới")
         btn_new_schedule.setObjectName("primaryButton")
         btn_new_schedule.setIcon(get_icon("plus", "#FFFFFF", 16))
         btn_new_schedule.clicked.connect(self.create_schedule_requested.emit)
@@ -193,6 +193,7 @@ class ScheduleWorkspaceView(QWidget):
         action_row.addWidget(self.btn_reconcile)
 
         self.btn_pause_toggle = QPushButton("⏸ Tạm dừng / Tiếp tục")
+        self.btn_pause_toggle.setToolTip("Chỉ hoạt động với lịch đang chờ (đã lên lịch máy) hoặc đang tạm dừng.")
         self.btn_pause_toggle.clicked.connect(self._handle_pause_toggle)
         action_row.addWidget(self.btn_pause_toggle)
 
@@ -360,7 +361,7 @@ class ScheduleWorkspaceView(QWidget):
         self.reload_schedules()
 
     def _handle_pause_toggle(self) -> None:
-        """Tạm dừng hoặc tiếp tục lịch hẹn giờ trên máy."""
+        """UX2-05 P0: Tạm dừng hoặc tiếp tục lịch hẹn giờ trên máy — state machine an toàn."""
         job_id = self._get_selected_job_id()
         if not job_id:
             QMessageBox.warning(self, "Chưa chọn", "Vui lòng chọn tác vụ.")
@@ -370,8 +371,39 @@ class ScheduleWorkspaceView(QWidget):
         if not job:
             return
 
-        new_state = "scheduled_local" if job["state"] == "paused" else "paused"
+        current_state = job["state"]
+
+        # Chỉ các trạng thái "đang chờ" mới được phép tạm dừng/tiếp tục
+        PAUSABLE_STATES = {"scheduled_local", "paused"}
+        TERMINAL_STATES = {"published", "cancelled", "failed_final"}
+
+        if current_state in TERMINAL_STATES:
+            state_label = {
+                "published": "Đã đăng thành công",
+                "cancelled": "Đã hủy",
+                "failed_final": "Lỗi định",
+            }[current_state]
+            QMessageBox.information(
+                self,
+                "Không thể thay đổi",
+                f"Tác vụ đang ở trạng thái '{state_label}' và không thể tạm dừng hay khởi động lại.\n"
+                f"Dùng 'Đối chiếu' nếu cần kiểm tra trạng thái thực trên Facebook.",
+            )
+            return
+
+        if current_state not in PAUSABLE_STATES:
+            QMessageBox.information(
+                self,
+                "Không áp dụng",
+                f"Tác vụ đang ở trạng thái '{current_state}' — không thể tạm dừng/tiếp tục.\n"
+                f"Chỉ áp dụng với lịch đang chờ (scheduled_local) hoặc đang tạm dừng (paused).",
+            )
+            return
+
+        new_state = "scheduled_local" if current_state == "paused" else "paused"
+        action_label = "Tiếp tục" if new_state == "scheduled_local" else "Tạm dừng"
         self.queue.update_job_outcome(job_id, state=new_state)
+        logger.info(f"UX2-05: Job {job_id[:12]} được {action_label} ({current_state} → {new_state})")
         self.reload_schedules()
 
     def _handle_retry_job(self) -> None:

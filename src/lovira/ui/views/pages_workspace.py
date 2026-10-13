@@ -319,7 +319,7 @@ class PagesWorkspaceView(QWidget):
         self.btn_bulk_import.clicked.connect(self.bulk_import_requested.emit)
         header_row.addWidget(self.btn_bulk_import)
 
-        self.btn_add_page = QPushButton(" + Kết nối Fanpage mới")
+        self.btn_add_page = QPushButton(" Kết nối Fanpage mới")
         self.btn_add_page.setObjectName("primaryButton")
         self.btn_add_page.setIcon(get_icon("plus", "#FFFFFF", 16))
         self.btn_add_page.clicked.connect(self._open_connect_dialog)
@@ -353,11 +353,11 @@ class PagesWorkspaceView(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels([
-            "ID Nội bộ", "Facebook Page ID", "Tên Fanpage", "Trạng thái", "Ngày cập nhật"
+            "Facebook Page ID", "Tên Fanpage", "Trạng thái", "Xác thực Token", "Ngày cập nhật"
         ])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -423,21 +423,33 @@ class PagesWorkspaceView(QWidget):
         self.table.setRowCount(len(filtered_pages))
 
         for row, p in enumerate(filtered_pages):
-            # Cột 0: ID Nội bộ
-            self.table.setItem(row, 0, QTableWidgetItem(p["id"]))
+            # Cột 0: Facebook Page ID — lưu internal_id vào UserRole để lookup
+            fb_pid = p["facebook_page_id"]
+            item_fb = QTableWidgetItem(fb_pid)
+            item_fb.setData(Qt.ItemDataRole.UserRole, p["id"])  # ID nội bộ ẩn
+            self.table.setItem(row, 0, item_fb)
 
-            # Cột 1: Facebook Page ID
-            self.table.setItem(row, 1, QTableWidgetItem(p["facebook_page_id"]))
+            # Cột 1: Tên Fanpage
+            self.table.setItem(row, 1, QTableWidgetItem(p["name"]))
 
-            # Cột 2: Tên Fanpage
-            self.table.setItem(row, 2, QTableWidgetItem(p["name"]))
-
-            # Cột 3: Trạng thái (Gắn StatusChip + text tương thích)
+            # Cột 2: Trạng thái (Chip hiện đại)
             status_key = p.get("status", "unknown")
-            status_str = "🟢 Sẵn sàng" if status_key == "ready" else "⚠️ Cần kiểm tra"
-            self.table.setItem(row, 3, QTableWidgetItem(status_str))
+            self.table.setItem(row, 2, QTableWidgetItem(status_key))
             chip = StatusChip(status_key)
-            self.table.setCellWidget(row, 3, chip)
+            self.table.setCellWidget(row, 2, chip)
+
+            # Cột 3: Xác thực token — có thể đăng bài?
+            PUBLISH_READY = {"ready"}
+            NEEDS_RECONNECT = {"token_expired", "insufficient_permissions"}
+            if status_key in PUBLISH_READY:
+                auth_text = "✅ Sẵn sàng đăng bài"
+            elif status_key in NEEDS_RECONNECT:
+                auth_text = "⚠️ Cần kết nối lại"
+            elif status_key == "unverified":
+                auth_text = "❓ Chưa xác minh"
+            else:
+                auth_text = "❓ Chưa biết"
+            self.table.setItem(row, 3, QTableWidgetItem(auth_text))
 
             # Cột 4: Ngày cập nhật
             raw_updated = p.get("updated_at", "")
@@ -456,7 +468,11 @@ class PagesWorkspaceView(QWidget):
             return None
         row = selected[0].row()
         item = self.table.item(row, 0)
-        return item.text() if item else None
+        # Lấy internal ID từ UserRole (không hiển thị trên bảng)
+        if item:
+            internal_id = item.data(Qt.ItemDataRole.UserRole)
+            return internal_id if internal_id else item.text()
+        return None
 
     def _handle_verify_selected_token(self) -> None:
         """Kiểm tra sức khỏe Access Token của Fanpage được chọn."""
