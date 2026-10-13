@@ -136,3 +136,28 @@ def test_graph_publish_reels_flow():
             assert res.success is True
             assert res.video_id == "vid_reels_12345"
             assert res.post_id == "vid_reels_12345"
+
+
+def test_graph_publish_uses_facebook_page_id():
+    """Kiểm tra GraphPublishAdapter.publish dùng facebook_page_id thật thay vì internal page_id."""
+    adapter = GraphPublishAdapter()
+    snap = ContentSnapshot(
+        batch_id="b-99",
+        page_id="internal_page_id_xyz",
+        content_type=ContentType.TEXT,
+        final_caption="Hello Facebook!",
+    )
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"id": "fb_post_real_777"}
+
+    with patch.object(adapter.session, "post", return_value=mock_resp) as mock_post:
+        res = adapter.publish("valid_token", snap, facebook_page_id="1000999888")
+        assert res.success is True
+        assert res.post_id == "fb_post_real_777"
+        called_url = mock_post.call_args[0][0]
+        # URL phải chứa ID Facebook thật (1000999888), không chứa internal_page_id_xyz
+        assert "1000999888/feed" in called_url
+        assert "internal_page_id_xyz" not in called_url
+

@@ -1,6 +1,7 @@
 """
 Unit test cho F-22: Giao diện Soạn bài & Đặt lịch đa Page
 Đáp ứng BR-04, BR-06, AC-05, AC-06, AC-07, AC-15, AC-19, AC-41
+Đã cập nhật theo Lovira Workspace 2.0 (sử dụng page_dropdown / FanpageMultiSelect)
 """
 
 import pytest
@@ -37,8 +38,8 @@ def test_composer_ui_page_selection_and_button_label(qapp, temp_db, tmp_path):
     """Section 4.3 & AC-05: Đổi nhãn nút động ghi rõ số Page đích và phương thức."""
     vault = SecretVault(fallback_vault_dir=tmp_path / "vault")
     page_repo = PageRepository(temp_db, vault)
-    p1 = page_repo.upsert_page("fb_101", "Lovira Fashion")
-    p2 = page_repo.upsert_page("fb_102", "Lovira Cosmetics")
+    p1 = page_repo.upsert_page("fb_101", "Lovira Fashion", status="ready")
+    p2 = page_repo.upsert_page("fb_102", "Lovira Cosmetics", status="ready")
 
     queue_repo = PublishQueueRepository(temp_db)
     view = PostComposerView(page_repo=page_repo, queue_repo=queue_repo)
@@ -46,9 +47,10 @@ def test_composer_ui_page_selection_and_button_label(qapp, temp_db, tmp_path):
     # Ban đầu chưa chọn Page nào
     assert "0 Page" in view.btn_submit.text()
 
-    # Chọn 2 Page
-    view.page_list_widget.item(0).setCheckState(Qt.CheckState.Checked)
-    view.page_list_widget.item(1).setCheckState(Qt.CheckState.Checked)
+    # Chọn 2 Page qua page_dropdown
+    view.page_dropdown.set_page_selected(p1, True)
+    view.page_dropdown.set_page_selected(p2, True)
+    assert len(view.page_dropdown.selected_page_ids()) == 2
     assert "Đăng ngay lên 2 Page" in view.btn_submit.text()
 
     # Bật Hẹn giờ (AC-06) -> Nhãn đổi thành Đặt lịch
@@ -66,7 +68,7 @@ def test_composer_ui_attach_video_and_submit_batch(qapp, temp_db, tmp_path):
     """BR-06, AC-15, AC-19: Gắn video từ 1-click workflow và gửi hàng đợi nguyên tử."""
     vault = SecretVault(fallback_vault_dir=tmp_path / "vault")
     page_repo = PageRepository(temp_db, vault)
-    p_id = page_repo.upsert_page("fb_p1", "Lovira Test Page")
+    p_id = page_repo.upsert_page("fb_p1", "Lovira Test Page", status="ready")
 
     queue_repo = PublishQueueRepository(temp_db)
     view = PostComposerView(page_repo=page_repo, queue_repo=queue_repo)
@@ -82,8 +84,8 @@ def test_composer_ui_attach_video_and_submit_batch(qapp, temp_db, tmp_path):
     assert view.caption_input.toPlainText() == "Vũ điệu mùa hè Lovira"
     assert view.cb_content_type.currentText() == "Reels"
 
-    # 2. Chọn Page đích
-    view.page_list_widget.item(0).setCheckState(Qt.CheckState.Checked)
+    # 2. Chọn Page đích qua page_dropdown
+    view.page_dropdown.set_page_selected(p_id, True)
 
     # 3. Giả lập bấm Submit
     enqueue_mock = MagicMock()
@@ -101,3 +103,34 @@ def test_composer_ui_attach_video_and_submit_batch(qapp, temp_db, tmp_path):
     assert job is not None
     assert job["page_id"] == p_id
     assert "Vũ điệu mùa hè Lovira" in job["content_snapshot"]
+
+
+def test_composer_ui_page_dropdown_filtering_and_unready(qapp, temp_db, tmp_path):
+    """Kiểm thử lọc theo tên / FB ID và không cho chọn Page chưa sẵn sàng."""
+    vault = SecretVault(fallback_vault_dir=tmp_path / "vault")
+    page_repo = PageRepository(temp_db, vault)
+    p_ready1 = page_repo.upsert_page("111222", "Lovira Official", status="ready")
+    p_ready2 = page_repo.upsert_page("333444", "Beauty Spa", status="ready")
+    p_unready = page_repo.upsert_page("555666", "Expired Page", status="token_expired")
+
+    queue_repo = PublishQueueRepository(temp_db)
+    view = PostComposerView(page_repo=page_repo, queue_repo=queue_repo)
+
+    # 1. Lọc theo tên
+    view.page_dropdown.search.setText("Beauty")
+    visible_count = sum(not item.isHidden() for _, item, _, _ in view.page_dropdown._rows)
+    assert visible_count == 1
+
+    # 2. Lọc theo FB ID
+    view.page_dropdown.search.setText("111222")
+    visible_count = sum(not item.isHidden() for _, item, _, _ in view.page_dropdown._rows)
+    assert visible_count == 1
+
+    # 3. Page chưa sẵn sàng (token_expired) bị vô hiệu hóa checkbox
+    view.page_dropdown.search.clear()
+    for pid, _, checkbox, _ in view.page_dropdown._rows:
+        if pid == p_unready:
+            assert not checkbox.isEnabled()
+            # Thử ép check -> không được tính vào selected_page_ids
+            checkbox.setChecked(True)
+            assert pid not in view.page_dropdown.selected_page_ids()

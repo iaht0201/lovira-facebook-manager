@@ -176,7 +176,9 @@ class LocalSchedulerService:
 
         # BƯỚC 2: Gọi mạng NGOÀI transaction (Section 9.4)
         for job_id, page_id, snapshot, page_token in claimed_jobs:
-            pub_result = self.publisher.publish(page_token, snapshot)
+            page_data = self.page_repo.get_page(page_id)
+            fb_page_id = (page_data.get("facebook_page_id") if page_data else None) or page_id
+            pub_result = self.publisher.publish(page_token, snapshot, facebook_page_id=fb_page_id)
 
             if pub_result.success:
                 self.queue.update_job_outcome(

@@ -1,11 +1,10 @@
-"""Lovira Workspace 2.1 - compact schedule management (native PySide6).
+"""Lovira Workspace 2.2 - responsive visual publishing calendar (native PySide6).
 
-Three synchronized read views: List / Monthly calendar / Kanban.
+Three synchronized read views: Monthly calendar / Kanban / List.
 Calendar day click -> posts for that day, grouped visually by time and Fanpage.
 All times are displayed as Vietnam time (UTC+07:00).
 
-Drop-in replacement for src/lovira/ui/workspaces/schedule_workspace.py
-(adjust the destination to the actual module path in your project).
+Target: src/lovira/ui/views/schedule_workspace.py.
 """
 
 from __future__ import annotations
@@ -13,12 +12,17 @@ from __future__ import annotations
 import calendar
 import json
 import logging
+import hashlib
+import shutil
+import tempfile
+import weakref
+from pathlib import Path
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QProcess, QStandardPaths, QUrl
+from PySide6.QtGui import QKeyEvent, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -43,7 +47,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QHeaderView,
+    QSizePolicy,
 )
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from src.lovira.storage.db import DatabaseManager
 from src.lovira.storage.queue_repository import PublishQueueRepository
@@ -56,6 +62,11 @@ logger = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
 MAX_LIST_ROWS = 500
 MAX_MONTH_ROWS = 5000
+MAX_VISIBLE_DAY_CARDS = 100
+MAX_KANBAN_COLUMN_CARDS = 90
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
+CONTENT_TYPES = {"text": "Văn bản", "photo": "Ảnh", "video": "Video", "reels": "Reels"}
 
 STATE_LABELS = {
     "scheduled_local": "Lịch trên máy",
@@ -105,16 +116,19 @@ def _parse_vn(value: Any) -> Optional[datetime]:
         return None
 
 
-def _snapshot_caption(value: Any) -> str:
+def _snapshot_data(value: Any) -> Dict[str, Any]:
     if not value:
-        return ""
+        return {}
     try:
-        obj = json.loads(value) if isinstance(value, str) else value
-        if not isinstance(obj, dict):
-            return ""
-        return str(obj.get("final_caption") or obj.get("caption") or "")
-    except (ValueError, TypeError):
-        return ""
+        result = json.loads(value) if isinstance(value, str) else value
+        return result if isinstance(result, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _snapshot_caption(value: Any) -> str:
+    snap = _snapshot_data(value)
+    return str(snap.get("final_caption") or snap.get("caption") or "")
 
 
 def _caption(row: Dict[str, Any], max_chars: int = 90) -> str:
@@ -131,73 +145,179 @@ def _time_label(row: Dict[str, Any]) -> str:
 
 def _prepare(row: Dict[str, Any]) -> Dict[str, Any]:
     result = dict(row)
+    snap = _snapshot_data(result.get("content_snapshot"))
+    result["_snapshot"] = snap
     result["_when_vn"] = _parse_vn(result.get("scheduled_at_utc"))
-    result["_caption"] = _snapshot_caption(result.get("content_snapshot"))
+    result["_caption"] = str(snap.get("final_caption") or snap.get("caption") or "")
     result["_page_name"] = str(result.get("page_name") or result.get("page_id") or "Không rõ Fanpage")
+    result["_type"] = str(snap.get("content_type") or "text").lower()
+    result["_media_id"] = str(snap.get("primary_media_id") or "")
+    result["_media_path"] = str(snap.get("media_path") or "")
+    result["_thumbnail"] = ""
+    result["_duration"] = None
     result["_search"] = " ".join(
-        str(part).lower()
-        for part in (
-            result.get("id") or "",
-            result.get("page_id") or "",
-            result["_page_name"],
-            result["_caption"],
-        )
+        str(part).lower() for part in (result.get("id") or "", result.get("page_id") or "",
+                                   result["_page_name"], result["_caption"], result["_type"])
     )
     return result
 
 
+class AvatarLoader(QObject):
+    """Optional, non-blocking HTTPS fanpage avatars. No Facebook credentials involved."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.manager = QNetworkAccessManager(self)
+        self.cached: Dict[str, QPixmap] = {}
+        self.failed: set[str] = set()
+        self.pending: Dict[str, List[Any]] = {}
+
+    def apply(self, url: str, label: QLabel, size: int) -> None:
+        if not url.startswith("https://") or url in self.failed:
+            return
+        if url in self.cached:
+            self._set(label, self.cached[url], size)
+            return
+        if url in self.pending:
+            self.pending[url].append((weakref.ref(label), size))
+            return
+        self.pending[url] = [(weakref.ref(label), size)]
+        req = QNetworkRequest(QUrl(url))
+        req.setTransferTimeout(7000)
+        reply = self.manager.get(req)
+        reply.finished.connect(lambda url=url, reply=reply: self._finished(url, reply))
+
+    @staticmethod
+    def _set(label: QLabel, pix: QPixmap, size: int) -> None:
+        try:
+            label.setPixmap(pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                       Qt.TransformationMode.SmoothTransformation))
+        except RuntimeError:
+            pass  # Qt already deleted the label while a request was pending.
+
+    def _finished(self, url: str, reply: QNetworkReply) -> None:
+        requests = self.pending.pop(url, [])
+        if reply.error() == QNetworkReply.NetworkError.NoError:
+            data = bytes(reply.readAll())
+            if len(data) <= 1024 * 1024:
+                pix = QPixmap()
+                if pix.loadFromData(data) and not pix.isNull():
+                    self.cached[url] = pix
+                    for ref, size in requests:
+                        label = ref()
+                        if label is not None:
+                            self._set(label, pix, size)
+        if url not in self.cached:
+            self.failed.add(url)
+        reply.deleteLater()
+
+
+class AvatarLabel(QLabel):
+    def __init__(self, row: Dict[str, Any], loader: Optional[AvatarLoader], size: int = 24,
+                 parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("background:#344969;color:#eef5ff;border:1px solid #496080;"
+                           f"border-radius:{size // 2}px;font-size:{max(9, size//3)}px;font-weight:700;")
+        name = str(row.get("_page_name") or "P").strip()
+        self.setText(name[:1].upper())
+        self.setToolTip(name)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        url = str(row.get("page_avatar_url") or "")
+        if loader and url:
+            loader.apply(url, self, size)
+
+
+class MediaPreview(QLabel):
+    """Draw local image/thumbnail, otherwise a truthful video/photo/text fallback."""
+
+    def __init__(self, row: Dict[str, Any], height: int = 58, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.row = row
+        self._image = QPixmap()
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumWidth(height)
+        self.setFixedHeight(height)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setStyleSheet("background:#101b2c;border:1px solid #30435c;border-radius:7px;color:#91a9c8;")
+        self.set_thumbnail(str(row.get("_thumbnail") or ""))
+
+    def set_thumbnail(self, path: str) -> None:
+        pix = QPixmap(path) if path and Path(path).is_file() else QPixmap()
+        self._image = pix
+        if not pix.isNull():
+            self.setText("")
+            self._scale()
+        else:
+            kind = str(self.row.get("_type") or "")
+            self.setText("▶ VIDEO" if kind in ("video", "reels") else ("▧ ẢNH" if kind == "photo" else "✎ TEXT"))
+
+    def _scale(self) -> None:
+        if not self._image.isNull():
+            self.setPixmap(self._image.scaled(max(self.width()-4, 1), max(self.height()-4, 1),
+                                Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation))
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        self._scale()
+
+
 class CalendarDayCell(QFrame):
-    """Clickable, keyboard-accessible calendar cell."""
+    """Low minimum cell height ensures every week remains visible without scrolling."""
 
     clicked = Signal(object)
 
-    def __init__(
-        self,
-        day: date,
-        in_month: bool,
-        jobs: List[Dict[str, Any]],
-        selected: bool,
-        parent: Optional[QWidget] = None,
-    ) -> None:
+    def __init__(self, day: date, in_month: bool, jobs: List[Dict[str, Any]], selected: bool,
+                 avatar_loader: Optional[AvatarLoader] = None,
+                 parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.day = day
         self.in_month = in_month
         self.setObjectName("calendarDay")
-        self.setMinimumHeight(94)
+        self.setMinimumHeight(44)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus if in_month else Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor if in_month else Qt.CursorShape.ArrowCursor)
-
         bg = "#20324a" if selected else "#131f30"
         border = "#7289ff" if selected else ("#35435a" if day == datetime.now(VN_TZ).date() else "#263447")
         if not in_month:
             bg, border = "#101824", "#182536"
-        self.setStyleSheet(
-            f"QFrame#calendarDay {{background: {bg};border: 1px solid {border};border-radius: 8px;}}"
-        )
+        self.setStyleSheet(f"QFrame#calendarDay {{background:{bg};border:1px solid {border};border-radius:7px;}}")
         inner = QVBoxLayout(self)
-        inner.setContentsMargins(8, 7, 7, 5)
+        inner.setContentsMargins(5, 5, 5, 3)
         inner.setSpacing(3)
-        title = QLabel(f"{day.day}" + (f"   ·   {len(jobs)} bài" if jobs and in_month else ""))
-        title.setStyleSheet(
-            f"color: {'#f8fbff' if in_month else '#607187'};font-size: 12px;font-weight: 700;border: none;"
-        )
-        title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        inner.addWidget(title)
-        if in_month:
-            for job in jobs[:2]:
-                color = STATE_COLORS.get(job.get("state"), "#9ca3af")
-                short_page = job["_page_name"][:14]
-                hint = QLabel(f"● {_time_label(job)}  {short_page}")
-                hint.setStyleSheet(f"color: {color};font-size: 10px;border: none;")
-                hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-                hint.setToolTip(f"{job['_page_name']} · {_caption(job, 150)}")
-                inner.addWidget(hint)
-            if len(jobs) > 2:
-                more = QLabel(f"+{len(jobs) - 2} bài khác")
-                more.setStyleSheet("color: #8ea0b9;font-size: 10px;border: none;")
-                more.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-                inner.addWidget(more)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(3)
+        day_lbl = QLabel(str(day.day))
+        day_lbl.setStyleSheet("color:" + ("#f8fbff" if in_month else "#677c96") + ";font-size:11px;font-weight:700;border:none;")
+        day_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        title_row.addWidget(day_lbl)
+        title_row.addStretch(1)
+        if jobs and in_month:
+            count = QLabel(f"{len(jobs)} bài")
+            count.setStyleSheet("color:#a5c5e6;background:#273952;border:none;border-radius:4px;font-size:9px;padding:1px 3px;")
+            count.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            title_row.addWidget(count)
+        inner.addLayout(title_row)
+        if in_month and jobs:
+            job = jobs[0]
+            entry = QHBoxLayout()
+            entry.setSpacing(3)
+            entry.addWidget(AvatarLabel(job, avatar_loader, 16))
+            mark = "▶ " if job.get("_type") in ("video", "reels") else ("▧ " if job.get("_type") == "photo" else "")
+            info = QLabel(f"{_time_label(job)} · {mark}{job['_page_name']}")
+            info.setStyleSheet(f"color:{STATE_COLORS.get(job.get('state'),'#bbc9dc')};font-size:10px;border:none;")
+            info.setMinimumWidth(0)
+            info.setTextFormat(Qt.TextFormat.PlainText)
+            info.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            info.setToolTip(f"{job['_page_name']} · {_caption(job, 180)}")
+            entry.addWidget(info, stretch=1)
+            inner.addLayout(entry)
         inner.addStretch(1)
+        self.setToolTip(f"{day:%d/%m/%Y} · {len(jobs)} bài đăng. Click để xem chi tiết.")
 
     def mousePressEvent(self, event: Any) -> None:
         if self.in_month and event.button() == Qt.MouseButton.LeftButton:
@@ -213,11 +333,11 @@ class CalendarDayCell(QFrame):
 
 
 class ScheduleJobCard(QFrame):
-    """Selectable job, used in the daily agenda and Kanban columns."""
-
+    """Small thumbnail + avatar + caption + status, for Kanban and day agenda."""
     clicked = Signal(str)
 
-    def __init__(self, row: Dict[str, Any], selected: bool = False, parent: Optional[QWidget] = None):
+    def __init__(self, row: Dict[str, Any], selected: bool = False,
+                 avatar_loader: Optional[AvatarLoader] = None, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.job = row
         self.job_id = str(row["id"])
@@ -226,42 +346,47 @@ class ScheduleJobCard(QFrame):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setToolTip(f"Job ID: {self.job_id}\n{_caption(row, 400)}")
         self._set_style(selected)
-        inner = QVBoxLayout(self)
-        inner.setContentsMargins(10, 8, 10, 8)
-        inner.setSpacing(4)
-
-        heading = QHBoxLayout()
-        heading.setSpacing(5)
-        page_lbl = QLabel(row["_page_name"])
-        page_lbl.setStyleSheet("color: #f4f6fd;font-size: 11px;font-weight: 700;border: none;")
-        page_lbl.setWordWrap(True)
-        page_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        heading.addWidget(page_lbl, stretch=1)
-        hour_lbl = QLabel(_time_label(row))
-        hour_lbl.setStyleSheet("color: #a5b2c6;font-size: 11px;border: none;")
-        hour_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        heading.addWidget(hour_lbl)
-        inner.addLayout(heading)
-
-        body = QLabel(_caption(row, 100))
+        root = QHBoxLayout(self)
+        root.setContentsMargins(7, 7, 7, 7)
+        root.setSpacing(7)
+        media = MediaPreview(row, 58)
+        media.setFixedWidth(64)
+        root.addWidget(media)
+        right = QVBoxLayout()
+        right.setSpacing(3)
+        page = QHBoxLayout()
+        page.setSpacing(5)
+        page.addWidget(AvatarLabel(row, avatar_loader, 20))
+        name = QLabel(row["_page_name"])
+        name.setStyleSheet("color:#f4f6fd;font-size:11px;font-weight:700;border:none;")
+        name.setMinimumWidth(0)
+        name.setTextFormat(Qt.TextFormat.PlainText)
+        name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        page.addWidget(name, 1)
+        hour = QLabel(_time_label(row))
+        hour.setStyleSheet("color:#a5b2c6;font-size:10px;border:none;")
+        hour.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        page.addWidget(hour)
+        right.addLayout(page)
+        body = QLabel(_caption(row, 76))
+        body.setStyleSheet("color:#bdc9dc;font-size:10px;border:none;")
         body.setWordWrap(True)
-        body.setMaximumHeight(40)
-        body.setStyleSheet("color: #bdc9dc;font-size: 11px;border: none;")
+        body.setMaximumHeight(31)
+        body.setMinimumWidth(0)
+        body.setTextFormat(Qt.TextFormat.PlainText)
         body.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        inner.addWidget(body)
-
+        right.addWidget(body)
         color = STATE_COLORS.get(str(row.get("state")), "#9ca3af")
-        status = QLabel(f"● {STATE_LABELS.get(str(row.get('state')), str(row.get('state')))}")
-        status.setStyleSheet(f"color: {color};font-size: 10px;border: none;")
+        status = QLabel(f"● {STATE_LABELS.get(str(row.get('state')), str(row.get('state')))}  ·  {CONTENT_TYPES.get(row.get('_type'), 'Bài')}")
+        status.setStyleSheet(f"color:{color};font-size:10px;border:none;")
         status.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        inner.addWidget(status)
+        right.addWidget(status)
+        root.addLayout(right, stretch=1)
 
     def _set_style(self, selected: bool) -> None:
         border = "#8192ff" if selected else "#314057"
-        self.setStyleSheet(
-            f"QFrame#postCard {{background: #1b293c;border: 1px solid {border};border-radius: 8px;}}"
-            f"QFrame#postCard:hover {{border-color: #7184ad;}}"
-        )
+        self.setStyleSheet(f"QFrame#postCard {{background:#1b293c;border:1px solid {border};border-radius:8px;}}"
+                           "QFrame#postCard:hover {border-color:#7184ad;}")
 
     def set_selected(self, selected: bool) -> None:
         self._set_style(selected)
@@ -309,6 +434,9 @@ class ScheduleWorkspaceView(QWidget):
         self._cards: List[ScheduleJobCard] = []
         self._selected_day = datetime.now(VN_TZ).date()
         self._month_anchor = self._selected_day.replace(day=1)
+        self._avatar_loader = AvatarLoader(self)
+        self._video_process: Optional[QProcess] = None
+        self._video_target = ""
         self._init_ui()
         if self.page_context:
             self.page_context.page_scope_changed.connect(self._on_page_scope_changed)
@@ -362,8 +490,8 @@ class ScheduleWorkspaceView(QWidget):
             }
         """)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(18, 15, 18, 14)
-        outer.setSpacing(10)
+        outer.setContentsMargins(14, 11, 14, 10)
+        outer.setSpacing(7)
 
         # Compact header, no overlong all-caps title.
         header = QHBoxLayout()
@@ -391,16 +519,18 @@ class ScheduleWorkspaceView(QWidget):
         header.addWidget(self.btn_new_schedule)
         outer.addLayout(header)
 
-        # Minimal single-line counters, database-aggregated (not capped by list limit).
+        # Minimal single-line counters, including paused jobs so summary never shows all zeros with visible content.
         kpi = QFrame()
         kpi.setStyleSheet("QFrame {background: #18283b;border: 1px solid #2b3d53;border-radius: 8px;}")
         kpi_row = QHBoxLayout(kpi)
-        kpi_row.setContentsMargins(12, 9, 12, 9)
+        kpi_row.setContentsMargins(10, 6, 10, 6)
         kpi_row.setSpacing(0)
         self._kpi_labels = {}
         for index, (key, name, color) in enumerate((
+            ("total", "Tổng", "#e0eaff"),
             ("local", "Lịch máy", "#b6a5ff"),
             ("remote", "Facebook nhận", "#7dc7ff"),
+            ("paused", "Tạm dừng", "#ffd17d"),
             ("published", "Đã đăng", "#69ddb2"),
             ("issues", "Cần xử lý", "#ff9aa6"),
         )):
@@ -415,7 +545,7 @@ class ScheduleWorkspaceView(QWidget):
             slot.addWidget(number)
             slot.addStretch(1)
             kpi_row.addLayout(slot, stretch=1)
-            if index < 3:
+            if index < 5:
                 divider = QFrame()
                 divider.setFrameShape(QFrame.Shape.VLine)
                 divider.setFixedWidth(1)
@@ -453,7 +583,7 @@ class ScheduleWorkspaceView(QWidget):
         tabs_row = QHBoxLayout()
         tabs_row.setSpacing(8)
         self.mode_tabs = QTabBar()
-        for text in ("Danh sách", "Lịch tháng", "Kanban"):
+        for text in ("Lịch tháng", "Kanban", "Danh sách"):
             self.mode_tabs.addTab(text)
         self.mode_tabs.currentChanged.connect(self._switch_view)
         tabs_row.addWidget(self.mode_tabs)
@@ -464,11 +594,13 @@ class ScheduleWorkspaceView(QWidget):
         outer.addLayout(tabs_row)
 
         self.view_stack = QStackedWidget()
-        self._build_list_view()
         self._build_calendar_view()
         self._build_kanban_view()
+        self._build_list_view()
         self.content_stack = self.view_stack  # Compatibility alias.
         outer.addWidget(self.view_stack, stretch=1)
+        self.mode_tabs.setCurrentIndex(0)
+        self.view_stack.setCurrentIndex(0)
 
         # One contextual action rather than four permanently wide buttons.
         footer = QHBoxLayout()
@@ -564,33 +696,36 @@ class ScheduleWorkspaceView(QWidget):
         btn_today.clicked.connect(self._go_today)
         navigator.addWidget(btn_today)
         navigator.addStretch(1)
-        notice = QLabel("Chọn ngày để xem các Fanpage và bài đăng")
-        notice.setStyleSheet("color: #8fa2bd;font-size: 10px;")
-        navigator.addWidget(notice)
+        self.btn_day_mobile = self._small_button("Xem bài trong ngày", "Mở chi tiết ngày đang chọn")
+        self.btn_day_mobile.clicked.connect(self._show_day_dialog)
+        self.btn_day_mobile.hide()
+        navigator.addWidget(self.btn_day_mobile)
         vbox.addLayout(navigator)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(5)
-        self.month_scroll = QScrollArea()
-        self.month_scroll.setWidgetResizable(True)
-        self.month_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._calendar_splitter = splitter
+        # No scroll area: the grid automatically distributes available height over 4-6 weeks.
         self.month_widget = QWidget()
+        self.month_widget.setMinimumHeight(0)
         self.days_grid = QGridLayout(self.month_widget)
-        self.days_grid.setContentsMargins(0, 0, 4, 0)
-        self.days_grid.setSpacing(5)
-        self.month_scroll.setWidget(self.month_widget)
-        splitter.addWidget(self.month_scroll)
+        self.days_grid.setContentsMargins(0, 0, 3, 0)
+        self.days_grid.setHorizontalSpacing(5)
+        self.days_grid.setVerticalSpacing(4)
+        splitter.addWidget(self.month_widget)
 
         sidebar = QFrame()
-        sidebar.setStyleSheet("QFrame {background: #152236;border: 1px solid #29394e;border-radius: 8px;}")
-        sidebar.setMinimumWidth(242)
+        self.day_sidebar = sidebar
+        sidebar.setObjectName("scheduleSidebar")
+        sidebar.setStyleSheet("QFrame#scheduleSidebar {background:#152236;border:1px solid #29394e;border-radius:8px;}")
+        sidebar.setMinimumWidth(0)
         right = QVBoxLayout(sidebar)
-        right.setContentsMargins(10, 10, 10, 10)
+        right.setContentsMargins(10, 9, 10, 9)
         right.setSpacing(6)
         self.lbl_day_title = QLabel("")
-        self.lbl_day_title.setStyleSheet("color: #f3f6fd;font-size: 13px;font-weight: 700;border: none;")
+        self.lbl_day_title.setStyleSheet("color:#f3f6fd;font-size:12px;font-weight:700;border:none;")
         self.lbl_day_count = QLabel("")
-        self.lbl_day_count.setStyleSheet("color: #93a8c2;font-size: 11px;border: none;")
+        self.lbl_day_count.setStyleSheet("color:#93a8c2;font-size:10px;border:none;")
         right.addWidget(self.lbl_day_title)
         right.addWidget(self.lbl_day_count)
         self.day_scroll = QScrollArea()
@@ -598,14 +733,67 @@ class ScheduleWorkspaceView(QWidget):
         self.day_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.day_content = QWidget()
         self.day_cards_layout = QVBoxLayout(self.day_content)
-        self.day_cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.day_cards_layout.setSpacing(7)
+        self.day_cards_layout.setContentsMargins(0, 0, 2, 0)
+        self.day_cards_layout.setSpacing(6)
         self.day_scroll.setWidget(self.day_content)
-        right.addWidget(self.day_scroll, stretch=1)
+        right.addWidget(self.day_scroll, stretch=2)
+        # Selected post preview lives directly in the sidebar, not a separate modal.
+        self.detail_scroll = QScrollArea()
+        self.detail_scroll.setWidgetResizable(True)
+        self.detail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.detail_content = QWidget()
+        detail_layout = QVBoxLayout(self.detail_content)
+        detail_layout.setContentsMargins(1, 4, 2, 2)
+        detail_layout.setSpacing(5)
+        detail_title = QLabel("XEM TRƯỚC BÀI ĐĂNG")
+        detail_title.setStyleSheet("color:#9bb2ce;font-size:10px;font-weight:700;")
+        detail_layout.addWidget(detail_title)
+        self.preview_image = MediaPreview({}, 112)
+        detail_layout.addWidget(self.preview_image)
+        page_heading = QHBoxLayout()
+        self.preview_page_row = page_heading
+        page_heading.setSpacing(7)
+        self.preview_avatar = AvatarLabel({}, None, 28)
+        page_heading.addWidget(self.preview_avatar)
+        self.preview_page = QLabel("Chọn bài để xem chi tiết")
+        self.preview_page.setStyleSheet("color:#eef4ff;font-weight:700;font-size:11px;")
+        self.preview_page.setWordWrap(True)
+        self.preview_page.setTextFormat(Qt.TextFormat.PlainText)
+        page_heading.addWidget(self.preview_page, 1)
+        detail_layout.addLayout(page_heading)
+        self.preview_meta = QLabel("")
+        self.preview_meta.setTextFormat(Qt.TextFormat.PlainText)
+        self.preview_meta.setWordWrap(True)
+        self.preview_meta.setStyleSheet("color:#92a9c4;font-size:10px;")
+        detail_layout.addWidget(self.preview_meta)
+        self.preview_caption = QLabel("")
+        self.preview_caption.setWordWrap(True)
+        self.preview_caption.setTextFormat(Qt.TextFormat.PlainText)
+        self.preview_caption.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.preview_caption.setStyleSheet("color:#d6e3f4;font-size:11px;")
+        detail_layout.addWidget(self.preview_caption)
+        self.preview_error = QLabel("")
+        self.preview_error.setWordWrap(True)
+        self.preview_error.setTextFormat(Qt.TextFormat.PlainText)
+        self.preview_error.setStyleSheet("color:#ff9cac;font-size:10px;")
+        detail_layout.addWidget(self.preview_error)
+        detail_actions = QHBoxLayout()
+        self.btn_open_media = self._small_button("▶ Mở media", "Mở video/ảnh từ máy (không tự động đăng)")
+        self.btn_open_media.clicked.connect(self._open_selected_media)
+        detail_actions.addWidget(self.btn_open_media)
+        self.btn_detail_full = self._small_button("Chi tiết", "Xem đầy đủ mã tác vụ và nội dung")
+        self.btn_detail_full.clicked.connect(self._show_job_details)
+        detail_actions.addWidget(self.btn_detail_full)
+        detail_actions.addStretch(1)
+        detail_layout.addLayout(detail_actions)
+        detail_layout.addStretch(1)
+        self.detail_scroll.setWidget(self.detail_content)
+        right.addWidget(self.detail_scroll, stretch=3)
         splitter.addWidget(sidebar)
+        splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 7)
         splitter.setStretchFactor(1, 3)
-        splitter.setSizes([700, 300])
+        splitter.setSizes([760, 350])
         vbox.addWidget(splitter, stretch=1)
         self.view_stack.addWidget(body)
 
@@ -631,6 +819,12 @@ class ScheduleWorkspaceView(QWidget):
         if index not in (0, 1, 2):
             return
         self.view_stack.setCurrentIndex(index)
+        if index == 0:
+            self._render_month()
+        elif index == 1:
+            self._render_kanban()
+        else:
+            self._render_table()
         self._update_limit_label()
 
     def _on_page_scope_changed(self, page_id: Optional[str]) -> None:
@@ -688,7 +882,7 @@ class ScheduleWorkspaceView(QWidget):
         base = """
             SELECT j.id, j.batch_id, j.page_id, p.name AS page_name,
                    j.content_snapshot, j.state, j.scheduled_at_utc,
-                   j.blocked_reason, j.last_error_code
+                   j.blocked_reason, j.last_error_code, p.avatar_url AS page_avatar_url
             FROM publish_jobs j LEFT JOIN pages p ON p.id = j.page_id
         """
         where, params = self._sql_where()
@@ -707,13 +901,41 @@ class ScheduleWorkspaceView(QWidget):
         with self.db.connection_scope() as conn:
             result = conn.execute(sql, tuple(params)).fetchall()
         too_many = len(result) > limit
-        return [_prepare(dict(row)) for row in result[:limit]], too_many
+        prepared = [_prepare(dict(row)) for row in result[:limit]]
+        self._enrich_media(prepared)
+        return prepared, too_many
+
+    def _enrich_media(self, rows: List[Dict[str, Any]]) -> None:
+        """Bulk-read thumbnail/local media paths from the existing media_assets schema."""
+        ids = {r["_media_id"] for r in rows if r["_media_id"]}
+        assets: Dict[str, Dict[str, Any]] = {}
+        if ids:
+            with self.db.connection_scope() as conn:
+                # SQLite default max variable count can be 999; never send an unbounded IN list.
+                sorted_ids = sorted(ids)
+                for off in range(0, len(sorted_ids), 400):
+                    chunk = sorted_ids[off:off+400]
+                    placeholders = ",".join("?" for _ in chunk)
+                    sql = f"SELECT id, local_path, thumbnail_path, duration FROM media_assets WHERE id IN ({placeholders})"
+                    for asset in conn.execute(sql, chunk):
+                        assets[str(asset["id"])] = dict(asset)
+        for row in rows:
+            asset = assets.get(row["_media_id"], {})
+            row["_media_path"] = row["_media_path"] or str(asset.get("local_path") or "")
+            thumbnail = str(asset.get("thumbnail_path") or "")
+            if thumbnail and Path(thumbnail).is_file():
+                row["_thumbnail"] = thumbnail
+            elif Path(row["_media_path"]).suffix.lower() in IMAGE_EXTS and Path(row["_media_path"]).is_file():
+                row["_thumbnail"] = row["_media_path"]
+            row["_duration"] = asset.get("duration")
 
     def _update_kpis(self) -> None:
         where, params = self._sql_where()
         sql = "SELECT j.state, COUNT(*) AS num FROM publish_jobs j" + where + " GROUP BY j.state"
         with self.db.connection_scope() as conn:
             counts = {str(r[0]): int(r[1]) for r in conn.execute(sql, tuple(params)).fetchall()}
+        self._kpi_labels["total"].setText(str(sum(counts.values())))
+        self._kpi_labels["paused"].setText(str(counts.get("paused", 0)))
         self._kpi_labels["local"].setText(str(counts.get("scheduled_local", 0)))
         self._kpi_labels["remote"].setText(str(counts.get("scheduled_remote", 0)))
         self._kpi_labels["published"].setText(str(counts.get("published", 0)))
@@ -743,16 +965,20 @@ class ScheduleWorkspaceView(QWidget):
     def _apply_filters(self, *_args: Any) -> None:
         self._filtered_list = self._filtered(self._cached_rows)
         self._filtered_month = self._filtered(self._month_rows)
-        self._render_table()
-        self._render_month()
-        self._render_kanban()
+        index = self.mode_tabs.currentIndex()
+        if index == 0:
+            self._render_month()
+        elif index == 1:
+            self._render_kanban()
+        else:
+            self._render_table()
         self._update_limit_label()
         self._update_selection_actions()
 
     def _update_limit_label(self) -> None:
         index = self.mode_tabs.currentIndex()
-        if index == 1:
-            self.lbl_limit.setText("Chỉ hiển thị 5.000 bài/tháng" if self._month_truncated else "")
+        if index == 0:
+            self.lbl_limit.setText("Giới hạn 5.000 bài/tháng" if self._month_truncated else "")
         else:
             self.lbl_limit.setText("500 lịch gần nhất · Hãy lọc Fanpage nếu cần" if self._list_truncated else "")
 
@@ -799,6 +1025,7 @@ class ScheduleWorkspaceView(QWidget):
         while self.days_grid.count():
             item = self.days_grid.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
         for col, name in enumerate(("T2", "T3", "T4", "T5", "T6", "T7", "CN")):
             lbl = QLabel(name)
@@ -823,7 +1050,8 @@ class ScheduleWorkspaceView(QWidget):
             self.days_grid.setRowStretch(week_i, 1)
             for col, day in enumerate(week):
                 in_month = day.month == self._month_anchor.month and day.year == self._month_anchor.year
-                cell = CalendarDayCell(day, in_month, by_day.get(day, []), day == self._selected_day)
+                cell = CalendarDayCell(day, in_month, by_day.get(day, []), day == self._selected_day,
+                                       self._avatar_loader)
                 cell.clicked.connect(self._select_day)
                 self.days_grid.addWidget(cell, week_i, col)
         self._render_day_panel()
@@ -831,9 +1059,7 @@ class ScheduleWorkspaceView(QWidget):
     def _render_day_panel(self) -> None:
         day = self._selected_day
         self.lbl_day_title.setText(f"{day.strftime('%d/%m/%Y')} · Lịch trong ngày")
-        rows = [r for r in self._filtered_month if r.get("_when_vn")
-                and r["_when_vn"].date() == day]
-        rows.sort(key=lambda r: (r["_when_vn"], r["_page_name"]))
+        rows = self._jobs_of_selected_day()
         pages = len({r.get("page_id") for r in rows})
         self.lbl_day_count.setText(f"{len(rows)} bài đăng  ·  {pages} Fanpage")
         self._clear_layout(self.day_cards_layout)
@@ -843,12 +1069,26 @@ class ScheduleWorkspaceView(QWidget):
             label.setWordWrap(True)
             label.setStyleSheet("color: #93a6c1;font-size: 11px;border: none;")
             self.day_cards_layout.addWidget(label)
-        for row in rows:
-            card = ScheduleJobCard(row, str(row["id"]) == self._selected_job_id)
+        for row in rows[:MAX_VISIBLE_DAY_CARDS]:
+            card = ScheduleJobCard(row, str(row["id"]) == self._selected_job_id, self._avatar_loader)
             card.clicked.connect(self._select_job)
             self.day_cards_layout.addWidget(card)
             self._cards.append(card)
+        if len(rows) > MAX_VISIBLE_DAY_CARDS:
+            note = QLabel(f"Hiển thị {MAX_VISIBLE_DAY_CARDS}/{len(rows)} bài. Lọc Fanpage để xem thêm.")
+            note.setStyleSheet("color:#9daec4;font-size:10px;")
+            note.setWordWrap(True)
+            self.day_cards_layout.addWidget(note)
         self.day_cards_layout.addStretch(1)
+        # Automatically show the first scheduled post in the preview when a day is opened.
+        if rows and not any(str(r["id"]) == self._selected_job_id for r in rows):
+            self._selected_job_id = str(rows[0]["id"])
+        elif not rows:
+            self._selected_job_id = None
+        for card in self._cards:
+            card.set_selected(card.job_id == self._selected_job_id)
+        self._render_post_preview()
+        self._update_selection_actions()
 
     def _render_kanban(self) -> None:
         self._clear_layout(self.board_columns)
@@ -862,6 +1102,7 @@ class ScheduleWorkspaceView(QWidget):
             stack = QVBoxLayout(column)
             stack.setContentsMargins(9, 9, 9, 9)
             stack.setSpacing(8)
+            visible = rows[:MAX_KANBAN_COLUMN_CARDS]
             header = QLabel(f"{title}    {len(rows)}")
             header.setStyleSheet("color: #eef3fc;font-size: 12px;font-weight: 700;border: none;")
             stack.addWidget(header)
@@ -871,11 +1112,16 @@ class ScheduleWorkspaceView(QWidget):
             cards_layout = QVBoxLayout(content)
             cards_layout.setContentsMargins(0, 0, 0, 0)
             cards_layout.setSpacing(7)
-            for row in rows:
-                card = ScheduleJobCard(row, str(row["id"]) == self._selected_job_id)
+            for row in visible:
+                card = ScheduleJobCard(row, str(row["id"]) == self._selected_job_id, self._avatar_loader)
                 card.clicked.connect(self._select_job)
                 cards_layout.addWidget(card)
                 self._cards.append(card)
+            if len(rows) > len(visible):
+                info = QLabel(f"{len(visible)}/{len(rows)} bài — dùng bộ lọc để thu hẹp")
+                info.setWordWrap(True)
+                info.setStyleSheet("color:#9cafc8;font-size:10px;")
+                cards_layout.addWidget(info)
             cards_layout.addStretch(1)
             scroll.setWidget(content)
             stack.addWidget(scroll, stretch=1)
@@ -911,6 +1157,8 @@ class ScheduleWorkspaceView(QWidget):
             self._update_selection_actions()
         self._selected_day = day
         self._render_month()
+        if self.width() < 970:
+            self._show_day_dialog()
 
     def _on_table_selection(self) -> None:
         index = self.table.currentRow()
@@ -937,6 +1185,7 @@ class ScheduleWorkspaceView(QWidget):
         for card in self._cards:
             card.set_selected(card.job_id == job_id)
         self._update_selection_actions()
+        self._render_post_preview()
 
     def _selected_job(self) -> Optional[Dict[str, Any]]:
         if not self._selected_job_id:
@@ -1010,18 +1259,181 @@ class ScheduleWorkspaceView(QWidget):
             self._select_job(str(item.data(Qt.ItemDataRole.UserRole)))
             self._open_more_menu()
 
+    def _render_post_preview(self) -> None:
+        row = self._selected_job()
+        if row is None:
+            self.preview_page.setText("Chọn bài trong ngày để xem chi tiết")
+            self.preview_image.row = {}
+            self.preview_image.set_thumbnail("")
+            self.preview_caption.setText("")
+            self.preview_meta.setText("")
+            self.preview_error.setText("")
+            self.btn_open_media.setEnabled(False)
+            self.btn_detail_full.setEnabled(False)
+            return
+        self.btn_detail_full.setEnabled(True)
+        when = row.get("_when_vn")
+        color_name = STATE_LABELS.get(str(row.get("state")), str(row.get("state")))
+        self.preview_page.setText(row["_page_name"])
+        old_avatar = self.preview_avatar
+        self.preview_avatar = AvatarLabel(row, self._avatar_loader, 28)
+        self.preview_page_row.replaceWidget(old_avatar, self.preview_avatar)
+        old_avatar.hide()
+        old_avatar.deleteLater()
+        self.preview_meta.setText(f"{when:%d/%m/%Y  %H:%M} (UTC+7)" if when else "Chưa định giờ")
+        self.preview_meta.setText(self.preview_meta.text() + "  ·  " + CONTENT_TYPES.get(row.get("_type"), "Bài đăng") + "  ·  " + color_name)
+        media_path = row.get("_media_path") or ""
+        duration = row.get("_duration")
+        if media_path:
+            self.preview_meta.setText(self.preview_meta.text() + "\n" + Path(media_path).name
+                                      + (f" · {round(float(duration))} giây" if duration else ""))
+        self.preview_caption.setText(_caption(row, 700))
+        self.preview_error.setText(str(row.get("blocked_reason") or row.get("last_error_code") or ""))
+        self.preview_image.row = row
+        self.preview_image.set_thumbnail(str(row.get("_thumbnail") or ""))
+        self.btn_open_media.setEnabled(bool(media_path and Path(media_path).is_file()))
+        if not row.get("_thumbnail") and Path(media_path).suffix.lower() in VIDEO_EXTS:
+            self._request_video_thumbnail(row)
+
+    def _open_selected_media(self) -> None:
+        row = self._selected_job()
+        if not row:
+            return
+        path = Path(str(row.get("_media_path") or ""))
+        if not path.is_file():
+            QMessageBox.information(self, "Media không tồn tại", "File đã bị di chuyển hoặc xóa khỏi máy.")
+            return
+        if path.suffix.lower() in VIDEO_EXTS:
+            try:
+                from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+                from PySide6.QtMultimediaWidgets import QVideoWidget
+            except ImportError:
+                pass  # Some installations ship without QtMultimedia: use OS player.
+            else:
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Xem video · " + path.name)
+                dialog.resize(min(860, max(self.width() - 80, 480)), min(580, max(self.height() - 70, 360)))
+                vertical = QVBoxLayout(dialog)
+                player_widget = QVideoWidget(dialog)
+                vertical.addWidget(player_widget, 1)
+                player = QMediaPlayer(dialog)
+                audio = QAudioOutput(dialog)
+                player.setAudioOutput(audio)
+                player.setVideoOutput(player_widget)
+                control = QHBoxLayout()
+                play = self._small_button("▶ Phát", "Phát video")
+                pause = self._small_button("Ⅱ Tạm dừng", "Dừng hình")
+                play.clicked.connect(player.play)
+                pause.clicked.connect(player.pause)
+                control.addWidget(play)
+                control.addWidget(pause)
+                control.addStretch(1)
+                vertical.addLayout(control)
+                player.setSource(QUrl.fromLocalFile(str(path.resolve())))
+                player.play()
+                dialog.exec()
+                player.stop()
+                return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve()))):
+            QMessageBox.warning(self, "Không mở được media", "Không tìm thấy ứng dụng xem file tương thích.")
+
+    def _request_video_thumbnail(self, row: Dict[str, Any]) -> None:
+        """Optionally use installed ffmpeg to extract one frame asynchronously."""
+        video_path = str(row.get("_media_path") or "")
+        if not Path(video_path).is_file() or not shutil.which("ffmpeg"):
+            return
+        try:
+            stat = Path(video_path).stat()
+            unique = f"{video_path}:{stat.st_mtime_ns}:{stat.st_size}"
+            key = hashlib.sha256(unique.encode("utf-8")).hexdigest()[:24]
+            cache_base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.CacheLocation)
+            folder = Path(cache_base or tempfile.gettempdir()) / "lovira-schedule-thumbs"
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / (key + ".jpg")
+        except OSError:
+            return
+        if target.is_file():
+            row["_thumbnail"] = str(target)
+            self.preview_image.set_thumbnail(str(target))
+            return
+        if self._video_process and self._video_process.state() != QProcess.ProcessState.NotRunning:
+            return
+        process = QProcess(self)
+        self._video_process = process
+        self._video_target = str(row["id"])
+        process.setProgram(shutil.which("ffmpeg") or "ffmpeg")
+        process.setArguments(["-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                              "-ss", "00:00:01", "-i", video_path, "-frames:v", "1",
+                              "-vf", "scale=480:-2", str(target)])
+        process.finished.connect(lambda _code, _status, row=row, target=target: self._video_thumbnail_ready(row, target))
+        process.start()
+        QTimer.singleShot(8000, lambda process=process: process.kill()
+                          if process.state() != QProcess.ProcessState.NotRunning else None)
+
+    def _video_thumbnail_ready(self, row: Dict[str, Any], target: Path) -> None:
+        self._video_process = None
+        if target.is_file() and target.stat().st_size:
+            row["_thumbnail"] = str(target)
+            if self._selected_job_id == str(row["id"]):
+                self.preview_image.set_thumbnail(str(target))
+
+    def _show_day_dialog(self) -> None:
+        """Narrow window: show selected day's agenda rather than forcing a 7-column scroll."""
+        rows = self._jobs_of_selected_day()
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Lịch đăng ngày {self._selected_day:%d/%m/%Y}")
+        dlg.resize(min(600, max(self.width()-50, 350)), min(620, max(self.height()-50, 400)))
+        layout = QVBoxLayout(dlg)
+        label = QLabel(f"{len(rows)} bài · {len({r['page_id'] for r in rows})} Fanpage")
+        layout.addWidget(label)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        stack = QVBoxLayout(content)
+        for r in rows:
+            card = ScheduleJobCard(r, str(r["id"]) == self._selected_job_id, self._avatar_loader)
+            card.clicked.connect(lambda job_id, dlg=dlg: (self._select_job(job_id), dlg.accept(), self._show_job_details()))
+            stack.addWidget(card)
+        if not rows:
+            stack.addWidget(QLabel("Ngày này chưa có bài đăng."))
+        stack.addStretch(1)
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close.rejected.connect(dlg.reject)
+        layout.addWidget(close)
+        dlg.exec()
+
+    def _jobs_of_selected_day(self) -> List[Dict[str, Any]]:
+        rows = [r for r in self._filtered_month if r.get("_when_vn")
+                and r["_when_vn"].date() == self._selected_day]
+        return sorted(rows, key=lambda r: (r["_when_vn"], r["_page_name"]))
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "day_sidebar"):
+            narrow = self.width() < 970
+            if self.day_sidebar.isVisible() == narrow or self.btn_day_mobile.isVisible() != narrow:
+                self.day_sidebar.setVisible(not narrow)
+                self.btn_day_mobile.setVisible(narrow)
+
     def _show_job_details(self) -> None:
         row = self._selected_job()
         if row is None:
             return
         dialog = QDialog(self)
         dialog.setWindowTitle("Chi tiết lịch đăng")
-        dialog.setMinimumWidth(480)
+        dialog.setMinimumWidth(460)
+        dialog.resize(560, 540)
         layout = QVBoxLayout(dialog)
+        preview = MediaPreview(row, 165)
+        layout.addWidget(preview)
         layout.setSpacing(9)
         when = row.get("_when_vn")
         for key, val in (
             ("Fanpage", row["_page_name"]),
+            ("Loại nội dung", CONTENT_TYPES.get(row.get("_type"), "Bài đăng")),
+            ("Media", row.get("_media_path") or "Không có"),
             ("Thời gian (VN)", when.strftime("%d/%m/%Y %H:%M") if when else "Chưa định giờ"),
             ("Trạng thái", STATE_LABELS.get(str(row.get("state")), str(row.get("state")))),
             ("Mã tác vụ", row["id"]),
@@ -1029,6 +1441,7 @@ class ScheduleWorkspaceView(QWidget):
             ("Lỗi / Lý do", row.get("blocked_reason") or row.get("last_error_code") or "Không có"),
         ):
             line = QLabel(f"{key}: {val}")
+            line.setTextFormat(Qt.TextFormat.PlainText)
             line.setWordWrap(True)
             layout.addWidget(line)
         layout.addWidget(QLabel("Nội dung bài viết"))

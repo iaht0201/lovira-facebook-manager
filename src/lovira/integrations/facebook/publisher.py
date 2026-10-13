@@ -43,16 +43,22 @@ class GraphPublishAdapter:
         clean_endpoint = endpoint.lstrip("/")
         return f"{self.BASE_URL}/{self.API_VERSION}/{clean_endpoint}"
 
-    def publish(self, page_token: str, snapshot: ContentSnapshot) -> PublishResult:
+    def publish(
+        self,
+        page_token: str,
+        snapshot: ContentSnapshot,
+        facebook_page_id: Optional[str] = None,
+    ) -> PublishResult:
         """Điều phối đăng nội dung tùy theo snapshot.content_type."""
+        target_page_id = facebook_page_id or snapshot.page_id
         if snapshot.content_type == ContentType.TEXT:
-            return self.publish_feed(page_token, snapshot.page_id, snapshot.final_caption)
+            return self.publish_feed(page_token, target_page_id, snapshot.final_caption)
         elif snapshot.content_type == ContentType.PHOTO:
-            return self.publish_photo(page_token, snapshot.page_id, snapshot.final_caption, snapshot.media_path)
+            return self.publish_photo(page_token, target_page_id, snapshot.final_caption, snapshot.media_path)
         elif snapshot.content_type == ContentType.VIDEO:
-            return self.publish_video(page_token, snapshot.page_id, snapshot.final_caption, snapshot.media_path)
+            return self.publish_video(page_token, target_page_id, snapshot.final_caption, snapshot.media_path)
         elif snapshot.content_type == ContentType.REELS:
-            return self.publish_reels(page_token, snapshot.page_id, snapshot.final_caption, snapshot.media_path)
+            return self.publish_reels(page_token, target_page_id, snapshot.final_caption, snapshot.media_path)
         else:
             return PublishResult(
                 success=False,

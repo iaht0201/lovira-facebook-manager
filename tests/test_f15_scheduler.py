@@ -72,12 +72,15 @@ def test_scheduler_due_and_published():
         )
 
         # Mock publisher thành công
-        with patch.object(scheduler.publisher, "publish", return_value=PublishResult(success=True, post_id="fb_post_999")):
+        with patch.object(scheduler.publisher, "publish", return_value=PublishResult(success=True, post_id="fb_post_999")) as mock_pub:
             results = scheduler.poll_and_process_jobs(session=valid_session, is_online=True)
 
             assert len(results) == 1
             assert results[0]["state"] == "published"
             assert results[0]["post_id"] == "fb_post_999"
+
+            # Kiểm tra facebook_page_id thật ("1001") được truyền vào publisher
+            assert mock_pub.call_args.kwargs.get("facebook_page_id") == "1001"
 
             job = queue.get_job(job_id)
             assert job["state"] == "published"

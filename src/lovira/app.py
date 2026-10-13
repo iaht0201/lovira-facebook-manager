@@ -129,7 +129,7 @@ def create_application() -> MainWindow:
     recovery_manager.recover_orphaned_jobs()
 
     # 6. Khởi động LocalSchedulerService
-    publisher = GraphPublishAdapter(fb_client)
+    publisher = GraphPublishAdapter(timeout=60.0)
     scheduler_service = LocalSchedulerService(
         db_manager=db_manager,
         queue_repo=queue_repo,

@@ -1,7 +1,7 @@
 """
 Kiểm thử chuyên biệt cho Task UX-07: Unified Post Composer 2.0 (DoD Compliance)
 - Kiểm tra Live Simulated Mobile Preview cập nhật thời gian thực khi gõ caption/chọn Page/gắn video
-- Kiểm tra các nút Chọn tất cả / Bỏ chọn Fanpage
+- Kiểm tra các nút Chọn tất cả / Bỏ chọn Fanpage qua page_dropdown
 - Kiểm tra thanh công cụ gợi ý hashtag nhanh và bộ đếm ký tự
 - Kiểm tra bảo toàn Invariant AC-06/AC-41: Tắt hẹn giờ bảo lưu thời gian, không tự động đăng bài
 - Kiểm tra tạo ContentSnapshot bất biến và gửi batch an toàn AC-15/AC-19
@@ -25,7 +25,7 @@ from src.lovira.domain.composer import ContentType
 def qapp():
     app = QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = QApplication(["lovira_test", "-platform", "offscreen"])
     return app
 
 
@@ -41,22 +41,25 @@ def test_composer_live_mobile_preview(qapp, temp_db, tmp_path):
     """DoD UX-07: Khung SimulatedPostPreview tự động đồng bộ theo thời gian thực."""
     vault = SecretVault(fallback_vault_dir=tmp_path / "vault")
     page_repo = PageRepository(temp_db, vault)
-    page_repo.upsert_page("fb_preview_1", "Lovira Fashion Official", status="ready")
+    p_id = page_repo.upsert_page("fb_preview_1", "Lovira Fashion Official", status="ready")
 
     queue_repo = PublishQueueRepository(temp_db)
     view = PostComposerView(page_repo=page_repo, queue_repo=queue_repo)
 
     # 1. Ban đầu Preview hiển thị placeholder
+    view._update_live_preview()
     assert view.preview_widget.lbl_page_name.text() == "Chưa chọn Fanpage"
     assert "Đính kèm file" in view.preview_widget.lbl_media_status.text()
 
     # 2. Chọn Fanpage -> Tên Page và avatar cập nhật trên Preview
-    view.page_list_widget.item(0).setCheckState(Qt.CheckState.Checked)
+    view.page_dropdown.set_page_selected(p_id, True)
+    view._update_live_preview()
     assert view.preview_widget.lbl_page_name.text() == "Lovira Fashion Official"
     assert view.preview_widget.lbl_avatar.text() == "L"
 
     # 3. Gõ Caption -> Caption cập nhật tức thì trên Preview
     view.caption_input.setPlainText("Bùng nổ mùa hè cùng BST mới #fashion #reels")
+    view._update_live_preview()
     assert "Bùng nổ mùa hè" in view.preview_widget.lbl_caption.text()
 
     # 4. Gắn Video -> Preview đổi icon và trạng thái media
@@ -67,6 +70,7 @@ def test_composer_live_mobile_preview(qapp, temp_db, tmp_path):
         "file_path": str(dummy_video),
         "title": "BST Mùa Hè",
     })
+    view._update_live_preview()
     assert "dance_reels.mp4" in view.preview_widget.lbl_media_status.text()
 
 
@@ -74,20 +78,20 @@ def test_composer_select_all_and_hashtag_tools(qapp, temp_db, tmp_path):
     """DoD UX-07: Nút Chọn tất cả/Bỏ chọn và công cụ hashtag hoạt động mượt mà."""
     vault = SecretVault(fallback_vault_dir=tmp_path / "vault")
     page_repo = PageRepository(temp_db, vault)
-    page_repo.upsert_page("p_1", "Page 1", status="ready")
-    page_repo.upsert_page("p_2", "Page 2", status="ready")
-    page_repo.upsert_page("p_3", "Page 3", status="ready")
+    p1 = page_repo.upsert_page("p_1", "Page 1", status="ready")
+    p2 = page_repo.upsert_page("p_2", "Page 2", status="ready")
+    p3 = page_repo.upsert_page("p_3", "Page 3", status="ready")
 
     queue_repo = PublishQueueRepository(temp_db)
     view = PostComposerView(page_repo=page_repo, queue_repo=queue_repo)
 
     # Bấm Chọn tất cả
-    view.btn_select_all.click()
+    view.page_dropdown.select_all()
     assert len(view._get_selected_page_ids()) == 3
     assert "3 Page" in view.btn_submit.text()
 
     # Bấm Bỏ chọn
-    view.btn_deselect_all.click()
+    view.page_dropdown.clear_selection()
     assert len(view._get_selected_page_ids()) == 0
     assert "0 Page" in view.btn_submit.text()
 
@@ -102,11 +106,11 @@ def test_composer_schedule_invariants_preserved(qapp, temp_db, tmp_path):
     """DoD UX-07: AC-06/AC-41 Bật/tắt hẹn giờ bảo lưu giờ và không tự động publish."""
     vault = SecretVault(fallback_vault_dir=tmp_path / "vault")
     page_repo = PageRepository(temp_db, vault)
-    page_repo.upsert_page("p_sched", "Page Lịch", status="ready")
+    p_sched = page_repo.upsert_page("p_sched", "Page Lịch", status="ready")
 
     queue_repo = PublishQueueRepository(temp_db)
     view = PostComposerView(page_repo=page_repo, queue_repo=queue_repo)
-    view.page_list_widget.item(0).setCheckState(Qt.CheckState.Checked)
+    view.page_dropdown.set_page_selected(p_sched, True)
 
     # Ban đầu không hẹn giờ
     assert not view.chk_schedule.isChecked()
