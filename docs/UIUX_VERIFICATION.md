@@ -73,7 +73,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 12:22 VN
 - **Branch:** `feature/uiux-redesign-v2`
-- **Commit:** Sau khi commit task UX-01
+- **Commit:** `c28d395`
 - **Command 1:** `pytest tests/test_ux01_safety_fixes.py -v`
 - **Kết quả Command 1:**
   ```text

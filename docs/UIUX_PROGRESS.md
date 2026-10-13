@@ -40,7 +40,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-01 — Safety Fixes & P0 Audit
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 12:17 — 13/10/2026 12:25
-- **Baseline SHA / Commit SHA:** `487742d`
+- **Baseline SHA / Commit SHA:** `487742d` / `c28d395`
 - **Scope and no-go changes:** 
   - Khắc phục triệt để 3 rủi ro an toàn dữ liệu và quyền hạn (P0):
     1. `bulk_import_dialog.py`: Ngăn chặn hoàn toàn việc silent fallback sang tất cả Fanpage khi `Page_IDs` rỗng hoặc không khớp. Chỉ khi người dùng chỉ định rõ `ALL` mới đăng đa Page. Các dòng lỗi bị bỏ qua và cảnh báo trên preview table.
