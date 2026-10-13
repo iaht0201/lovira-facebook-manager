@@ -97,13 +97,13 @@ class TemplateManagerDialog(QDialog):
         add_layout.addWidget(self.txt_content)
 
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("  + Thêm mẫu câu")
+        self.btn_add = QPushButton(" Thêm mẫu câu")
         self.btn_add.setObjectName("primaryButton")
         self.btn_add.setIcon(get_icon("composer", "#FFFFFF", 14))
         self.btn_add.clicked.connect(self._handle_add)
         btn_row.addWidget(self.btn_add)
 
-        self.btn_delete = QPushButton("  Xóa mẫu đã chọn")
+        self.btn_delete = QPushButton(" Xóa mẫu đã chọn")
         self.btn_delete.setObjectName("dangerButton")
         self.btn_delete.setIcon(get_icon("trash", "#FFFFFF", 14))
         self.btn_delete.clicked.connect(self._handle_delete)
@@ -207,11 +207,12 @@ class CommentsWorkspaceView(QWidget):
 
         top_layout.addStretch()
 
-        self.btn_manage_templates = QPushButton("  📝 Quản lý mẫu câu")
+        self.btn_manage_templates = QPushButton(" Quản lý mẫu câu")
+        self.btn_manage_templates.setIcon(get_icon("composer", "#F3F6FC", 16))
         self.btn_manage_templates.clicked.connect(self._open_template_manager)
         top_layout.addWidget(self.btn_manage_templates)
 
-        self.btn_refresh = QPushButton("  Đồng bộ bình luận")
+        self.btn_refresh = QPushButton(" Đồng bộ bình luận")
         self.btn_refresh.setIcon(get_icon("refresh", "#F3F6FC", 16))
         self.btn_refresh.clicked.connect(self._sync_comments)
         top_layout.addWidget(self.btn_refresh)

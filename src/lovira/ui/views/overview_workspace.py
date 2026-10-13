@@ -61,8 +61,8 @@ class MetricCard(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor if target_route else Qt.CursorShape.ArrowCursor)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(4)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(6)
 
         # 1. Hàng trên: Icon + Tiêu đề
         top_row = QHBoxLayout()

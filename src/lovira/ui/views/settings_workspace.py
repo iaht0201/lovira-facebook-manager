@@ -88,7 +88,7 @@ class SettingsWorkspaceView(QWidget):
 
         top_layout.addStretch()
 
-        self.btn_open_license = QPushButton("  💎 Quản lý Bản quyền")
+        self.btn_open_license = QPushButton(" Quản lý Bản quyền")
         self.btn_open_license.setObjectName("primaryButton")
         self.btn_open_license.setIcon(get_icon("pages", "#FFFFFF", 16))
         self.btn_open_license.clicked.connect(self._open_license_dialog)
@@ -184,7 +184,7 @@ class SettingsWorkspaceView(QWidget):
         sec_media_layout.addLayout(path_row)
 
         btn_clean_row = QHBoxLayout()
-        self.btn_clean_cache = QPushButton("  🧹 Dọn dẹp tệp tin tạm thời")
+        self.btn_clean_cache = QPushButton(" Dọn dẹp tệp tin tạm thời")
         self.btn_clean_cache.setIcon(get_icon("trash", "#CBD5E1", 14))
         self.btn_clean_cache.clicked.connect(self._handle_clean_cache)
         btn_clean_row.addWidget(self.btn_clean_cache)
@@ -207,13 +207,13 @@ class SettingsWorkspaceView(QWidget):
         sec_backup_layout.addWidget(desc_backup)
 
         btn_backup_row = QHBoxLayout()
-        self.btn_backup = QPushButton("  💾 Tạo bản sao lưu (.db)")
+        self.btn_backup = QPushButton(" Tạo bản sao lưu (.db)")
         self.btn_backup.setObjectName("primaryButton")
         self.btn_backup.setIcon(get_icon("downloads", "#FFFFFF", 16))
         self.btn_backup.clicked.connect(self._handle_backup)
         btn_backup_row.addWidget(self.btn_backup)
 
-        self.btn_restore = QPushButton("  📂 Khôi phục từ bản sao lưu")
+        self.btn_restore = QPushButton(" Khôi phục từ bản sao lưu")
         self.btn_restore.setIcon(get_icon("refresh", "#CBD5E1", 16))
         self.btn_restore.clicked.connect(self._handle_restore)
         btn_backup_row.addWidget(self.btn_restore)

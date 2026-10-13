@@ -605,7 +605,7 @@ class MediaLibraryTab(QWidget):
         self.btn_refresh.clicked.connect(self.reload_media_list)
         header_row.addWidget(self.btn_refresh)
 
-        btn_go_download = QPushButton(" + Tải video mới")
+        btn_go_download = QPushButton(" Tải video mới")
         btn_go_download.setObjectName("primaryButton")
         btn_go_download.setIcon(get_icon("plus", "#FFFFFF", 16))
         btn_go_download.clicked.connect(self.switch_to_download_requested.emit)

@@ -72,12 +72,12 @@ class ActivityWorkspaceView(QWidget):
 
         top_layout.addStretch()
 
-        self.btn_refresh = QPushButton("  Làm mới")
+        self.btn_refresh = QPushButton(" Làm mới")
         self.btn_refresh.setIcon(get_icon("refresh", "#F3F6FC", 16))
         self.btn_refresh.clicked.connect(self.reload_activities)
         top_layout.addWidget(self.btn_refresh)
 
-        self.btn_export = QPushButton("  Xuất nhật ký")
+        self.btn_export = QPushButton(" Xuất nhật ký")
         self.btn_export.setIcon(get_icon("downloads", "#F3F6FC", 16))
         self.btn_export.clicked.connect(self._export_logs)
         top_layout.addWidget(self.btn_export)

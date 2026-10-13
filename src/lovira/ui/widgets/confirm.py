@@ -103,14 +103,19 @@ class SafeConfirmDialog(QDialog):
 
         # Nút điều khiển
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
+        btn_row.setSpacing(12)
+        btn_row.addStretch()
 
         self.btn_cancel = QPushButton("Hủy bỏ")
+        self.btn_cancel.setMinimumHeight(36)
+        self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_cancel.clicked.connect(self.reject)
         btn_row.addWidget(self.btn_cancel)
 
         self.btn_danger = QPushButton(self.danger_action_text)
         self.btn_danger.setObjectName("dangerButton")
+        self.btn_danger.setMinimumHeight(36)
+        self.btn_danger.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_danger.setEnabled(False)  # Khóa mặc định cho tới khi tích checkbox
         self.btn_danger.clicked.connect(self.accept)
         btn_row.addWidget(self.btn_danger)

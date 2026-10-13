@@ -314,14 +314,14 @@ QPushButton#ghostButton:hover {{
     background-color: {c.bg_surface};
     border: 1px solid {c.border_subtle};
     border-radius: {s.radius_lg}px;
-    padding: {d.card_padding}px;
+    padding: 0px;
 }}
 
 #metricCard {{
     background-color: {c.bg_surface};
     border: 1px solid {c.border_subtle};
     border-radius: {s.radius_lg}px;
-    padding: 14px 18px;
+    padding: 0px;
     min-height: 100px;
 }}
 

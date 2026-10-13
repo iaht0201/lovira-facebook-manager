@@ -133,8 +133,9 @@ class StatusChip(QFrame):
         )
         icon_name, text, text_color, bg_color, default_tooltip = cfg
 
+        self.setFixedHeight(24)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 3, 10, 3)
+        layout.setContentsMargins(8, 2, 10, 2)
         layout.setSpacing(6)
 
         # Bo góc pill và màu nền
