@@ -533,7 +533,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-13 — Final QA & Packaging
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 13:52 — 13/10/2026 13:59
-- **Baseline SHA / Commit SHA:** `5352d63` / Pending
+- **Baseline SHA / Commit SHA:** `5352d63` / `b867664`
 - **Scope and no-go changes:**
   - Tổng kiểm thử chất lượng (Final QA), xác minh 100% tiêu chuẩn và đóng gói phát hành:
     1. **Kiểm tra hoàn tất 10/10 Visual Snapshots:**

@@ -453,7 +453,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 13:59 VN
 - **Branch:** `feature/uiux-redesign-v2`
-- **Commit:** Pending
+- **Commit:** `b867664`
 - **Visual Snapshots:** 10/10 mockups đã được xác minh toàn diện trong `docs/redesign_screenshots/`:
   - `01_dashboard_v2.png` (113 KB)
   - `02_fanpage_v2.png` (90 KB)
