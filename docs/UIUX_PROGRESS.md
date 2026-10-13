@@ -104,7 +104,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-03 — Desktop Shell & 10 Routes
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 12:28 — 13/10/2026 12:38
-- **Baseline SHA / Commit SHA:** `dfff0e1`
+- **Baseline SHA / Commit SHA:** `dfff0e1` / `c359f30`
 - **Scope and no-go changes:**
   - Xây dựng kiến trúc điều hướng ổn định với `Route` enum và `NavigationController` (`navigation.py`):
     - Đăng ký và quản lý 10 Routes: `dashboard`, `composer`, `pages`, `schedule`, `media`, `downloads`, `bulk_import`, `comments`, `activity`, `settings`.

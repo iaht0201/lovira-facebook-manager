@@ -129,6 +129,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 12:35 VN
 - **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** `c359f30`
 - **Command 1:** `pytest tests/test_ux03_shell_and_routes.py -v`
 - **Kết quả Command 1:**
   ```text
