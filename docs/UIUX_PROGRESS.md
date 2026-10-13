@@ -488,7 +488,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-12 — Settings 2.0 & Activity Log 2.0 (`settings_workspace.py`, `activity_workspace.py`)
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 13:46 — 13/10/2026 13:51
-- **Baseline SHA / Commit SHA:** `20a5c54` / Pending
+- **Baseline SHA / Commit SHA:** `20a5c54` / `df5b1f9`
 - **Scope and no-go changes:**
   - Nâng cấp Màn hình Cài đặt & Nhật ký kiểm toán 2.0 bám sát 2 Mockups `07_cai_dat.png` & `10_nhat_ky.png`:
     1. **Settings Workspace 2.0 (`SettingsWorkspaceView` — Khắc phục A-13, A-17):**
