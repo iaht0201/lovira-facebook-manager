@@ -158,6 +158,12 @@ class NavigationController(QObject):
         for r, btn in self._route_to_button.items():
             btn.setChecked(r == route)
 
+        # Chuyển tab tương ứng nếu widget là VideoWorkspaceView
+        if route == Route.MEDIA and hasattr(target_widget, "show_library_tab"):
+            target_widget.show_library_tab()
+        elif route == Route.DOWNLOADS and hasattr(target_widget, "show_download_tab"):
+            target_widget.show_download_tab()
+
         self.route_changed.emit(route.value)
         return True
 

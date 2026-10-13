@@ -1,11 +1,12 @@
 """
-Lovira-Facebook Manager
-Màn hình Làm việc Video & Thư viện Media (VideoWorkspaceView)
-- Tab 1: Tải video Douyin, TikTok, Bilibili: Hỗ trợ Tải 1 video & Tải hàng loạt danh sách link
-- Preview thumbnail trực quan từ URL và trích xuất từ video local
-- Xem lại video đã tải (mở trình phát hệ thống) và Mở thư mục chứa video
-- Tab 2: Thư viện media: Xem lại video, kiểm tra tham chiếu bảo vệ xóa file có lịch chờ (AC-12, AC-42)
-- Luồng 1-click chuyển trực tiếp sang Soạn bài & Đặt lịch (BR-06, Section 4.3)
+Lovira Workspace 2.0 — Video Workspace & Media Library (video_workspace.py)
+Màn hình Làm việc Video & Thư viện Media 2.0 (Mockups 05_thu_vien_media.png & 08_tai_video.png):
+- Tab 1 (Tải video): Tải 1 link & Tải hàng loạt link từ Douyin, TikTok, Bilibili
+- Preview thumbnail, metadata (tiêu đề, tác giả, thời lượng) trước và sau khi tải
+- Luồng 1-click chuyển trực tiếp sang Soạn bài & Đặt lịch (BR-06)
+- Tab 2 (Thư viện media): Bảng media hiện đại, bộ lọc nền tảng + tìm kiếm tức thời, EmptyState
+- Kiểm tra tham chiếu bảo vệ xóa file có lịch chờ (AC-12, AC-42)
+- Hỗ trợ chuyển tab tự động theo Route (Route.MEDIA -> Thư viện, Route.DOWNLOADS -> Tải video)
 """
 
 import os
@@ -33,7 +34,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QMessageBox,
-    QFileDialog,
+    QStackedLayout,
 )
 from src.lovira.integrations.downloaders.video_downloader import (
     VideoDownloader,
@@ -42,6 +43,8 @@ from src.lovira.integrations.downloaders.video_downloader import (
 )
 from src.lovira.storage.media_repository import MediaRepository
 from src.lovira.media.processor import MediaProcessor
+from src.lovira.ui.design.icons import get_icon
+from src.lovira.ui.widgets.empty_state import EmptyState
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +135,7 @@ class BatchDownloadWorker(QThread):
 
 
 class VideoDownloadTab(QWidget):
-    """Tab Tải Video (Hỗ trợ Tải 1 link & Tải hàng loạt danh sách)."""
+    """Tab Tải Video 2.0 (Hỗ trợ Tải 1 link & Tải hàng loạt danh sách)."""
 
     send_to_composer = Signal(dict)
     media_downloaded = Signal()
@@ -159,8 +162,19 @@ class VideoDownloadTab(QWidget):
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(16)
+
+        # Header Title
+        header_box = QVBoxLayout()
+        header_box.setSpacing(4)
+        title_lbl = QLabel("TẢI VIDEO DOUYIN / TIKTOK / BILIBILI")
+        title_lbl.setStyleSheet("font-size: 20px; font-weight: 800; color: #F3F6FC;")
+        sub_lbl = QLabel("Tải video độ phân giải cao không watermark, tự động lưu vào Thư viện và chuyển sang Soạn bài")
+        sub_lbl.setStyleSheet("font-size: 13px; color: #94A3B8;")
+        header_box.addWidget(title_lbl)
+        header_box.addWidget(sub_lbl)
+        layout.addLayout(header_box)
 
         # Tab con: [Tải 1 Video] | [Tải Hàng Loạt (Nhiều Link)]
         self.mode_tabs = QTabWidget()
@@ -168,52 +182,57 @@ class VideoDownloadTab(QWidget):
         # --- TAB CON 1: TẢI 1 VIDEO ---
         single_tab = QWidget()
         single_layout = QVBoxLayout(single_tab)
-        single_layout.setSpacing(12)
+        single_layout.setContentsMargins(12, 16, 12, 12)
+        single_layout.setSpacing(14)
 
         input_frame = QFrame()
         input_frame.setObjectName("cardFrame")
         input_layout = QVBoxLayout(input_frame)
+        input_layout.setContentsMargins(16, 14, 16, 14)
         input_layout.setSpacing(10)
 
-        title_lbl = QLabel("TẢI TỪ LIÊN KẾT TIKTOK / DOUYIN / BILIBILI")
-        title_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #818CF8;")
-        input_layout.addWidget(title_lbl)
+        input_title = QLabel("LIÊN KẾT VIDEO CẦN TẢI")
+        input_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #6258E8;")
+        input_layout.addWidget(input_title)
 
         url_row = QHBoxLayout()
+        url_row.setSpacing(10)
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("Dán liên kết video TikTok, Douyin hoặc Bilibili vào đây...")
-        self.btn_inspect = QPushButton("🔍 Lấy thông tin")
+        self.btn_inspect = QPushButton(" Lấy thông tin")
+        self.btn_inspect.setIcon(get_icon("search", "#A9B8CF", 14))
         self.btn_inspect.clicked.connect(self._inspect_video)
 
-        url_row.addWidget(self.url_input)
+        url_row.addWidget(self.url_input, stretch=1)
         url_row.addWidget(self.btn_inspect)
         input_layout.addLayout(url_row)
         single_layout.addWidget(input_frame)
 
-        # Card Preview thông tin
+        # Card Preview thông tin video
         self.preview_frame = QFrame()
         self.preview_frame.setObjectName("cardFrame")
         preview_layout = QHBoxLayout(self.preview_frame)
+        preview_layout.setContentsMargins(16, 14, 16, 14)
         preview_layout.setSpacing(16)
 
         self.thumb_label = QLabel("Chưa có ảnh xem trước")
-        self.thumb_label.setFixedSize(180, 130)
+        self.thumb_label.setFixedSize(180, 120)
         self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.thumb_label.setStyleSheet("background-color: #0F172A; border: 1px solid #334155; border-radius: 8px; color: #64748B;")
+        self.thumb_label.setStyleSheet("background-color: #0B101B; border: 1px solid #1E293B; border-radius: 8px; color: #64748B;")
         preview_layout.addWidget(self.thumb_label)
 
         info_layout = QVBoxLayout()
         info_layout.setSpacing(6)
         self.lbl_meta_title = QLabel("Tiêu đề: —")
         self.lbl_meta_title.setWordWrap(True)
-        self.lbl_meta_title.setStyleSheet("font-weight: 700; font-size: 13px; color: #F8FAFC;")
+        self.lbl_meta_title.setStyleSheet("font-weight: 700; font-size: 14px; color: #F3F6FC;")
 
         self.lbl_meta_platform = QLabel("Nền tảng: —")
         self.lbl_meta_author = QLabel("Tác giả: —")
         self.lbl_meta_duration = QLabel("Thời lượng: —")
 
         for lbl in [self.lbl_meta_platform, self.lbl_meta_author, self.lbl_meta_duration]:
-            lbl.setStyleSheet("color: #94A3B8; font-size: 12px;")
+            lbl.setStyleSheet("color: #94A3B8; font-size: 13px;")
 
         info_layout.addWidget(self.lbl_meta_title)
         info_layout.addWidget(self.lbl_meta_platform)
@@ -221,27 +240,31 @@ class VideoDownloadTab(QWidget):
         info_layout.addWidget(self.lbl_meta_duration)
         info_layout.addStretch()
 
-        preview_layout.addLayout(info_layout)
+        preview_layout.addLayout(info_layout, stretch=1)
         single_layout.addWidget(self.preview_frame)
 
-        # Điều khiển tải
+        # Điều khiển tiến trình tải
         ctrl_frame = QFrame()
         ctrl_frame.setObjectName("cardFrame")
         ctrl_layout = QVBoxLayout(ctrl_frame)
-        ctrl_layout.setSpacing(10)
+        ctrl_layout.setContentsMargins(16, 14, 16, 14)
+        ctrl_layout.setSpacing(12)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setFixedHeight(8)
         ctrl_layout.addWidget(self.progress_bar)
 
-        self.lbl_progress_status = QLabel("Trạng thái: Sẵn sàng")
+        self.lbl_progress_status = QLabel("Trạng thái: Sẵn sàng tải")
         self.lbl_progress_status.setStyleSheet("color: #94A3B8; font-size: 12px;")
         ctrl_layout.addWidget(self.lbl_progress_status)
 
         action_row = QHBoxLayout()
+        action_row.setSpacing(10)
         self.btn_download = QPushButton("⬇ Bắt đầu tải video")
         self.btn_download.setObjectName("primaryButton")
+        self.btn_download.setIcon(get_icon("download", "#FFFFFF", 16))
         self.btn_download.clicked.connect(self._start_download)
 
         self.btn_cancel = QPushButton("✖ Hủy tải")
@@ -249,7 +272,8 @@ class VideoDownloadTab(QWidget):
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self._cancel_download)
 
-        self.btn_watch_downloaded = QPushButton("▶ Xem video vừa tải")
+        self.btn_watch_downloaded = QPushButton("▶ Xem video")
+        self.btn_watch_downloaded.setIcon(get_icon("play", "#A9B8CF", 14))
         self.btn_watch_downloaded.setVisible(False)
         self.btn_watch_downloaded.clicked.connect(self._watch_last_downloaded)
 
@@ -257,8 +281,9 @@ class VideoDownloadTab(QWidget):
         self.btn_open_folder.setVisible(False)
         self.btn_open_folder.clicked.connect(self._open_download_folder)
 
-        self.btn_compose_now = QPushButton("🎬 Soạn bài và Đặt lịch ngay")
+        self.btn_compose_now = QPushButton("🎬 Soạn bài & Đặt lịch ngay")
         self.btn_compose_now.setObjectName("successButton")
+        self.btn_compose_now.setIcon(get_icon("composer", "#FFFFFF", 16))
         self.btn_compose_now.setVisible(False)
         self.btn_compose_now.clicked.connect(self._on_compose_now_clicked)
 
@@ -276,15 +301,17 @@ class VideoDownloadTab(QWidget):
         # --- TAB CON 2: TẢI HÀNG LOẠT (NHIỀU LINK) ---
         batch_tab = QWidget()
         batch_layout = QVBoxLayout(batch_tab)
-        batch_layout.setSpacing(12)
+        batch_layout.setContentsMargins(12, 16, 12, 12)
+        batch_layout.setSpacing(14)
 
         batch_frame = QFrame()
         batch_frame.setObjectName("cardFrame")
         b_frame_layout = QVBoxLayout(batch_frame)
+        b_frame_layout.setContentsMargins(16, 14, 16, 14)
         b_frame_layout.setSpacing(8)
 
         lbl_b_title = QLabel("TẢI HÀNG LOẠT THEO DANH SÁCH LIÊN KẾT")
-        lbl_b_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #818CF8;")
+        lbl_b_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #6258E8;")
         b_frame_layout.addWidget(lbl_b_title)
 
         lbl_b_sub = QLabel("Dán mỗi dòng 1 link video TikTok / Douyin / Bilibili:")
@@ -292,11 +319,14 @@ class VideoDownloadTab(QWidget):
         b_frame_layout.addWidget(lbl_b_sub)
 
         self.batch_text_edit = QTextEdit()
-        self.batch_text_edit.setPlaceholderText("https://www.tiktok.com/@user/video/123456789\nhttps://www.douyin.com/video/987654321\n...")
-        self.batch_text_edit.setFixedHeight(120)
+        self.batch_text_edit.setPlaceholderText(
+            "https://www.tiktok.com/@user/video/123456789\nhttps://www.douyin.com/video/987654321\n..."
+        )
+        self.batch_text_edit.setFixedHeight(110)
         b_frame_layout.addWidget(self.batch_text_edit)
 
         batch_btn_row = QHBoxLayout()
+        batch_btn_row.setSpacing(10)
         self.btn_start_batch = QPushButton("🚀 Bắt đầu Tải hàng loạt")
         self.btn_start_batch.setObjectName("primaryButton")
         self.btn_start_batch.clicked.connect(self._start_batch_download)
@@ -317,6 +347,7 @@ class VideoDownloadTab(QWidget):
         self.batch_progress_bar = QProgressBar()
         self.batch_progress_bar.setRange(0, 100)
         self.batch_progress_bar.setValue(0)
+        self.batch_progress_bar.setFixedHeight(8)
         self.batch_progress_bar.setVisible(False)
         batch_layout.addWidget(self.batch_progress_bar)
 
@@ -330,6 +361,7 @@ class VideoDownloadTab(QWidget):
         self.table_batch_results.setHorizontalHeaderLabels(["STT", "Tiêu đề video", "Đường dẫn file", "Thao tác"])
         self.table_batch_results.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table_batch_results.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table_batch_results.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         batch_layout.addWidget(self.table_batch_results)
 
         self.mode_tabs.addTab(batch_tab, "📦 Tải Hàng Loạt (Nhiều Link)")
@@ -346,7 +378,8 @@ class VideoDownloadTab(QWidget):
 
         meta = self.downloader.extract_metadata(url)
         self.btn_inspect.setEnabled(True)
-        self.btn_inspect.setText("🔍 Lấy thông tin")
+        self.btn_inspect.setText(" Lấy thông tin")
+        self.btn_inspect.setIcon(get_icon("search", "#A9B8CF", 14))
 
         if not meta:
             QMessageBox.critical(self, "Lỗi phân tích", "Không thể lấy thông tin video. Vui lòng kiểm tra lại đường link.")
@@ -358,7 +391,6 @@ class VideoDownloadTab(QWidget):
         m, s = divmod(int(meta.duration), 60)
         self.lbl_meta_duration.setText(f"Thời lượng: {m:02d}:{s:02d}")
 
-        # Tải thumbnail từ URL để hiển thị preview thực tế
         if meta.thumbnail_url:
             try:
                 resp = requests.get(meta.thumbnail_url, timeout=5)
@@ -404,7 +436,6 @@ class VideoDownloadTab(QWidget):
         self.lbl_progress_status.setText("✅ Tải video thành công!")
 
         file_path = data["file_path"]
-        # Trích xuất thumbnail JPEG từ file video thật
         thumb_path = Path(file_path).with_suffix(".thumb.jpg")
         try:
             self.media_processor.extract_thumbnail(Path(file_path), thumb_path, timestamp_sec=1.0)
@@ -416,7 +447,6 @@ class VideoDownloadTab(QWidget):
         except Exception as e:
             logger.debug(f"Không thể trích xuất thumbnail: {e}")
 
-        # Lưu media asset vào SQLite
         try:
             checksum = self.media_processor.calculate_sha256(Path(file_path))
             probe = self.media_processor.inspect_video(Path(file_path))
@@ -449,7 +479,7 @@ class VideoDownloadTab(QWidget):
     def _cancel_download(self) -> None:
         if self.current_worker:
             self.current_worker._is_cancelled = True
-        self.lbl_progress_status.setText("Đang hủy tải...")
+        self.lbl_progress_status.setText("Đang dừng tiến trình tải...")
         self.btn_cancel.setEnabled(False)
 
     def _watch_last_downloaded(self) -> None:
@@ -506,7 +536,6 @@ class VideoDownloadTab(QWidget):
         btn_view.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(fp)))
         self.table_batch_results.setCellWidget(row, 3, btn_view)
 
-        # Ghi nhận vào media_repo
         try:
             probe = self.media_processor.inspect_video(Path(fp))
             checksum = self.media_processor.calculate_sha256(Path(fp))
@@ -537,83 +566,177 @@ class VideoDownloadTab(QWidget):
 
 
 class MediaLibraryTab(QWidget):
-    """Tab Thư viện Media Quản lý các file đã tải kèm chức năng Xem lại & Mở file."""
+    """Tab Thư viện Media 2.0 (Quản lý video đã lưu trữ, tìm kiếm, EmptyState và bảo vệ AC-12)."""
 
     send_to_composer = Signal(dict)
+    switch_to_download_requested = Signal()
 
     def __init__(self, media_repo: MediaRepository, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.media_repo = media_repo
+        self._cached_assets: List[Dict[str, Any]] = []
+
         self._init_ui()
         self.reload_media_list()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(16)
 
-        # Thanh công cụ lọc
-        toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel("Nền tảng:"))
+        # Header Title
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
+
+        header_box = QVBoxLayout()
+        header_box.setSpacing(4)
+        title_lbl = QLabel("THƯ VIỆN MEDIA CỤC BỘ")
+        title_lbl.setStyleSheet("font-size: 20px; font-weight: 800; color: #F3F6FC;")
+        sub_lbl = QLabel("Duyệt kho video đã tải, phát thử, gửi trực tiếp sang Soạn bài hoặc xóa an toàn (AC-12)")
+        sub_lbl.setStyleSheet("font-size: 13px; color: #94A3B8;")
+        header_box.addWidget(title_lbl)
+        header_box.addWidget(sub_lbl)
+        header_row.addLayout(header_box)
+
+        header_row.addStretch()
+
+        self.btn_refresh = QPushButton(" Làm mới")
+        self.btn_refresh.setIcon(get_icon("refresh_cw", "#A9B8CF", 14))
+        self.btn_refresh.clicked.connect(self.reload_media_list)
+        header_row.addWidget(self.btn_refresh)
+
+        btn_go_download = QPushButton(" + Tải video mới")
+        btn_go_download.setObjectName("primaryButton")
+        btn_go_download.setIcon(get_icon("plus", "#FFFFFF", 16))
+        btn_go_download.clicked.connect(self.switch_to_download_requested.emit)
+        header_row.addWidget(btn_go_download)
+
+        layout.addLayout(header_row)
+
+        # Thanh công cụ lọc & tìm kiếm
+        filter_frame = QFrame()
+        filter_frame.setObjectName("cardFrame")
+        filter_layout = QHBoxLayout(filter_frame)
+        filter_layout.setContentsMargins(14, 10, 14, 10)
+        filter_layout.setSpacing(12)
+
+        filter_layout.addWidget(QLabel("Nền tảng:"))
         self.cb_filter_platform = QComboBox()
         self.cb_filter_platform.addItems(["Tất cả", "TikTok", "Douyin", "Bilibili", "Khác"])
-        self.cb_filter_platform.currentTextChanged.connect(self.reload_media_list)
-        toolbar.addWidget(self.cb_filter_platform)
+        self.cb_filter_platform.currentTextChanged.connect(self._apply_filters)
+        filter_layout.addWidget(self.cb_filter_platform)
 
-        toolbar.addStretch()
+        self.search_filter = QLineEdit()
+        self.search_filter.setPlaceholderText("🔍 Tìm video theo tên file, ID hoặc đường dẫn lưu trữ...")
+        self.search_filter.textChanged.connect(self._apply_filters)
+        filter_layout.addWidget(self.search_filter, stretch=1)
 
-        self.btn_refresh = QPushButton("🔄 Làm mới thư viện")
-        self.btn_refresh.clicked.connect(self.reload_media_list)
-        toolbar.addWidget(self.btn_refresh)
+        layout.addWidget(filter_frame)
 
-        layout.addLayout(toolbar)
+        # QStackedLayout: Chuyển đổi giữa Bảng danh sách và EmptyState
+        self.content_stack = QStackedLayout()
 
-        # Bảng danh sách media
+        # View 1: Bảng danh sách
+        table_container = QWidget()
+        table_layout = QVBoxLayout(table_container)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(10)
+
         self.table = QTableWidget()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([
             "ID", "Nền tảng", "Đường dẫn file", "Thời lượng", "Dung lượng", "Ngày tạo", "Thao tác"
         ])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 120)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(6, 90)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        layout.addWidget(self.table)
+        self.table.verticalHeader().setDefaultSectionSize(40)
+        table_layout.addWidget(self.table)
 
         # Nút thao tác dưới bảng
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
         self.btn_watch = QPushButton("▶ Xem video đã chọn")
+        self.btn_watch.setIcon(get_icon("play", "#A9B8CF", 14))
         self.btn_watch.clicked.connect(self._watch_selected_video)
 
-        self.btn_open_folder = QPushButton("📁 Mở thư mục chứa file")
+        self.btn_open_folder = QPushButton("📁 Mở thư mục")
         self.btn_open_folder.clicked.connect(self._open_selected_folder)
-
-        self.btn_compose_selected = QPushButton("🎬 Soạn bài với video này")
-        self.btn_compose_selected.setObjectName("primaryButton")
-        self.btn_compose_selected.clicked.connect(self._on_compose_selected)
-
-        self.btn_delete_selected = QPushButton("🗑 Xóa video")
-        self.btn_delete_selected.setObjectName("dangerButton")
-        self.btn_delete_selected.clicked.connect(self._on_delete_selected)
 
         btn_row.addWidget(self.btn_watch)
         btn_row.addWidget(self.btn_open_folder)
         btn_row.addStretch()
+
+        self.btn_compose_selected = QPushButton("🎬 Soạn bài với video này")
+        self.btn_compose_selected.setObjectName("primaryButton")
+        self.btn_compose_selected.setIcon(get_icon("composer", "#FFFFFF", 16))
+        self.btn_compose_selected.clicked.connect(self._on_compose_selected)
         btn_row.addWidget(self.btn_compose_selected)
+
+        self.btn_delete_selected = QPushButton("🗑 Xóa video")
+        self.btn_delete_selected.setObjectName("dangerButton")
+        self.btn_delete_selected.clicked.connect(self._on_delete_selected)
         btn_row.addWidget(self.btn_delete_selected)
-        layout.addLayout(btn_row)
+
+        table_layout.addLayout(btn_row)
+        self.content_stack.addWidget(table_container)
+
+        # View 2: EmptyState
+        self.empty_container = QWidget()
+        empty_layout = QVBoxLayout(self.empty_container)
+        empty_layout.setContentsMargins(0, 0, 0, 0)
+        self.empty_state = EmptyState.no_media(on_download=self.switch_to_download_requested.emit)
+        empty_layout.addWidget(self.empty_state)
+        self.content_stack.addWidget(self.empty_container)
+
+        layout.addLayout(self.content_stack, stretch=1)
 
     def reload_media_list(self) -> None:
+        self._cached_assets = self.media_repo.list_media_assets(platform=None, limit=200)
+        self._apply_filters()
+
+    def _apply_filters(self) -> None:
         platform_filter = self.cb_filter_platform.currentText().lower()
         if platform_filter == "tất cả":
             platform_filter = None
 
-        assets = self.media_repo.list_media_assets(platform=platform_filter, limit=100)
-        self.table.setRowCount(len(assets))
+        search_query = self.search_filter.text().strip().lower()
 
-        for row, item in enumerate(assets):
+        filtered = []
+        for item in self._cached_assets:
+            if platform_filter:
+                item_platform = (item.get("source_platform") or "").lower()
+                if platform_filter != item_platform:
+                    continue
+
+            if search_query:
+                item_id = item.get("id", "").lower()
+                item_path = item.get("local_path", "").lower()
+                if search_query not in item_id and search_query not in item_path:
+                    continue
+
+            filtered.append(item)
+
+        if not filtered:
+            self.content_stack.setCurrentIndex(1)
+            return
+
+        self.content_stack.setCurrentIndex(0)
+        self.table.setRowCount(len(filtered))
+
+        for row, item in enumerate(filtered):
             self.table.setItem(row, 0, QTableWidgetItem(item["id"]))
-            self.table.setItem(row, 1, QTableWidgetItem(item["source_platform"].upper()))
-            self.table.setItem(row, 2, QTableWidgetItem(item["local_path"]))
+            self.table.setItem(row, 1, QTableWidgetItem((item.get("source_platform") or "other").upper()))
+            self.table.setItem(row, 2, QTableWidgetItem(item.get("local_path", "")))
 
             dur = int(item.get("duration", 0) or 0)
             m, s = divmod(dur, 60)
@@ -623,12 +746,17 @@ class MediaLibraryTab(QWidget):
             self.table.setItem(row, 4, QTableWidgetItem(f"{size_mb:.1f} MB"))
             self.table.setItem(row, 5, QTableWidgetItem(item.get("created_at", "")))
 
-            # Nút thao tác nhanh trực tiếp trên dòng
+            cell_widget = QWidget()
+            cell_layout = QHBoxLayout(cell_widget)
+            cell_layout.setContentsMargins(4, 2, 4, 2)
+            cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             btn_play = QPushButton("▶ Xem")
+            btn_play.setFixedWidth(62)
             btn_play.setFixedHeight(24)
-            file_p = item["local_path"]
+            file_p = item.get("local_path", "")
             btn_play.clicked.connect(lambda _, fp=file_p: QDesktopServices.openUrl(QUrl.fromLocalFile(fp)))
-            self.table.setCellWidget(row, 6, btn_play)
+            cell_layout.addWidget(btn_play)
+            self.table.setCellWidget(row, 6, cell_widget)
 
     def _get_selected_asset_path(self) -> Optional[str]:
         selected = self.table.selectedItems()
@@ -687,7 +815,6 @@ class MediaLibraryTab(QWidget):
             QMessageBox.warning(self, "Chưa chọn", "Vui lòng chọn video cần xóa.")
             return
 
-        # Kiểm tra tham chiếu lịch đăng chờ
         refs = self.media_repo.check_media_references(asset_id)
         if refs["active_job_count"] > 0:
             count = refs["active_job_count"]
@@ -712,7 +839,7 @@ class MediaLibraryTab(QWidget):
 
 
 class VideoWorkspaceView(QWidget):
-    """Màn hình làm việc Video tổng hợp (gồm 2 tab)."""
+    """Màn hình làm việc Video tổng hợp 2.0 (gồm 2 tab: Tải video & Thư viện media)."""
 
     send_to_composer = Signal(dict)
 
@@ -726,7 +853,8 @@ class VideoWorkspaceView(QWidget):
     ):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         self.tab_widget = QTabWidget()
 
@@ -745,7 +873,19 @@ class VideoWorkspaceView(QWidget):
         self.tab_download.send_to_composer.connect(self.send_to_composer.emit)
         self.tab_library.send_to_composer.connect(self.send_to_composer.emit)
 
-        self.tab_widget.addTab(self.tab_download, "📥 Tải video mới (Đơn & Hàng loạt)")
+        # Nối nút chuyển từ Thư viện sang tab Tải
+        self.tab_library.switch_to_download_requested.connect(self.show_download_tab)
+
+        self.tab_widget.addTab(self.tab_download, "📥 Tải video mới (Douyin / TikTok / Bilibili)")
         self.tab_widget.addTab(self.tab_library, "📂 Thư viện media đã tải")
 
         layout.addWidget(self.tab_widget)
+
+    def show_download_tab(self) -> None:
+        """Chuyển sang tab Tải video (Route.DOWNLOADS)."""
+        self.tab_widget.setCurrentIndex(0)
+
+    def show_library_tab(self) -> None:
+        """Chuyển sang tab Thư viện media (Route.MEDIA)."""
+        self.tab_widget.setCurrentIndex(1)
+        self.tab_library.reload_media_list()

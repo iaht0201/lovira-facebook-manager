@@ -54,8 +54,9 @@ class BulkImportWorker(QThread):
         downloader: VideoDownloader,
         media_processor: MediaProcessor,
         download_dir: Path,
+        parent: Optional[QWidget] = None,
     ):
-        super().__init__()
+        super().__init__(parent)
         self.rows = rows
         self.page_repo = page_repo
         self.queue_repo = queue_repo
@@ -435,6 +436,7 @@ class BulkImportDialog(QDialog):
             downloader=self.downloader,
             media_processor=self.media_processor,
             download_dir=self.download_dir,
+            parent=self,
         )
         self.worker.progress_updated.connect(self._on_progress)
         self.worker.finished_success.connect(self._on_success)
@@ -447,11 +449,6 @@ class BulkImportDialog(QDialog):
         self.lbl_status.setText(status_msg)
 
     def _on_success(self, success_count: int, total: int) -> None:
-        if self.worker:
-            try:
-                self.worker.wait(3000)
-            except RuntimeError:
-                pass
         self.progress_bar.setValue(100)
         self.lbl_status.setText(f"✅ Hoàn thành: Đã nhập {success_count}/{total} bài viết vào hàng đợi.")
         self.btn_start_import.setEnabled(True)
@@ -461,14 +458,12 @@ class BulkImportDialog(QDialog):
             f"Đã lên lịch thành công cho {success_count} bài viết/Reels!\nCác tác vụ đã được đưa vào Lịch đăng tự động.",
         )
         self.import_completed.emit()
-        self.accept()
+        if self.worker and self.worker.isRunning():
+            self.worker.finished.connect(self.accept)
+        else:
+            self.accept()
 
     def _on_error(self, err_msg: str) -> None:
-        if self.worker:
-            try:
-                self.worker.wait(3000)
-            except RuntimeError:
-                pass
         self.btn_start_import.setEnabled(True)
         self.lbl_status.setText(f"❌ Lỗi: {err_msg}")
         QMessageBox.critical(self, "Lỗi trong tiến trình import", f"Có lỗi xảy ra:\n{err_msg}")

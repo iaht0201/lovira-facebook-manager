@@ -31,16 +31,6 @@ from src.lovira.ui.views.pages_workspace import ConnectPageDialog
 from src.lovira.ui.views.bulk_import_dialog import BulkImportDialog
 
 
-from PySide6.QtWidgets import QApplication
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 from src.lovira.storage.migrations import MigrationRunner
 
 @pytest.fixture
@@ -160,8 +150,9 @@ def test_bulk_import_dialog_export_and_process(qapp, temp_db, tmp_path):
 
     with patch.object(QMessageBox, "information"):
         dlg._start_import_process()
-        if dlg.worker:
-            dlg.worker.wait(5000)
+        worker = dlg.worker
+        if worker:
+            worker.wait(5000)
         qapp.processEvents()
 
     # Kiểm tra job trong database

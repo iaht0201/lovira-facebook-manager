@@ -352,3 +352,50 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 - **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Schedule Workspace 2.0, bảo toàn các invariant AC-14, có visual snapshot `04_schedule_v2.png`, 111/111 tests passed.
 - **Next unblocked task:** UX-09 — Media Library & Video Downloader 2.0 (`video_workspace.py`).
 
+---
+
+### UX-09 — Media Library & Video Downloader 2.0 (`video_workspace.py`)
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 13:16 — 13/10/2026 13:28
+- **Baseline SHA / Commit SHA:** `291d902` / `PENDING_COMMIT`
+- **Scope and no-go changes:**
+  - Nâng cấp Trình Tải Video & Thư viện Media 2.0 bám sát 2 Mockups `05_thu_vien_media.png` & `08_tai_video.png`:
+    1. **Tab 1 — Tải Video 2.0 (`VideoDownloadTab`):**
+       - Hỗ trợ tải đơn video (TikTok, Douyin, Bilibili) và tải hàng loạt theo danh sách link.
+       - Thanh dán link kèm chức năng Inspect metadata (Tiêu đề, Nền tảng, Tác giả, Thời lượng) và tải thumbnail xem trước.
+       - Thanh tiến độ % tải và tốc độ KB/s thời gian thực kèm nút Hủy tải an toàn.
+       - Nút 1-click **"🎬 Soạn bài & Đặt lịch ngay"** (BR-06) tự động chuyển sang Composer kèm dữ liệu video đã tải.
+    2. **Tab 2 — Thư viện Media 2.0 (`MediaLibraryTab`):**
+       - Bảng media hiện đại hiển thị thời lượng (mm:ss), dung lượng MB, ngày tải, nền tảng và nút ▶ Xem video nhanh.
+       - Bộ lọc nền tảng (`cb_filter_platform`) + Ô tìm kiếm tức thời theo tên file hoặc đường dẫn lưu trữ (`search_filter`).
+       - Tự động chuyển đổi giữa Bảng danh sách và `EmptyState.no_media()` khi không có kết quả phù hợp.
+       - Bảo vệ xóa an toàn theo **AC-12**: Chặn xóa file video nếu đang được lịch đăng chờ tham chiếu.
+    3. **Đồng bộ hóa Route & NavigationController:**
+       - Tích hợp `show_download_tab()` khi chuyển sang `Route.DOWNLOADS`.
+       - Tích hợp `show_library_tab()` khi chuyển sang `Route.MEDIA`.
+       - Bảo đảm QThread parent được gán chính xác tránh lỗi xung đột bộ nhớ trên Windows.
+- **Existing behavior to preserve:** Bảo toàn 100% các attribute cũ `downloader`, `media_repo`, `media_processor`, `download_dir`, `url_input`, `btn_inspect`, `_inspect_video`, `lbl_meta_title`, `lbl_meta_platform`, `btn_compose_now`, `progress_bar`, `table`, `cb_filter_platform`, `_on_delete_selected`, `send_to_composer`.
+- **Changed files:**
+  - `src/lovira/ui/views/video_workspace.py` (upgraded to 2.0)
+  - `src/lovira/ui/shell/navigation.py` (route tab switching hook)
+  - `src/lovira/ui/views/bulk_import_dialog.py` (thread lifecycle safety fix)
+  - `tests/conftest.py` (session-scoped qapp fixture)
+  - `tests/test_ux_enhancements.py` (thread wait safety)
+  - `tests/test_ux09_video_workspace.py` (new - 4 test cases)
+  - `scripts/capture_media_v2.py` (new - snapshot utility)
+  - `scripts/capture_download_v2.py` (new - snapshot utility)
+  - `docs/redesign_screenshots/05_media_library_v2.png` (captured visual snapshot)
+  - `docs/redesign_screenshots/08_video_download_v2.png` (captured visual snapshot)
+- **UI states implemented:**
+  - Tab Tải video: Nhập link, Xem trước metadata & thumbnail, Tiến độ tải, 1-click Soạn bài.
+  - Tab Thư viện media: Bảng dữ liệu, Lọc nền tảng, Tìm kiếm live, EmptyState, Chặn xóa AC-12.
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux09_video_workspace.py -v`: 4 passed in 1.16s.
+  - `python -m pytest tests/ -v`: 115 passed in 11.29s (toàn bộ 115/115 tests xanh 100%).
+- **Security & a11y self-review:**
+  - Chặn xóa file an toàn tuyệt đối khi đang có lịch tham chiếu (AC-12).
+  - Không mở file tùy tiện ngoài đường dẫn hợp lệ.
+- **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Media Library & Video Downloader 2.0, khắc phục triệt để lỗi A-12, có 2 visual snapshots `05_media_library_v2.png` và `08_video_download_v2.png`, 115/115 tests passed.
+- **Next unblocked task:** UX-10 — Bulk Import Wizard 2.0 (`bulk_import_dialog.py`).
+
+

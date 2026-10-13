@@ -318,3 +318,39 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
      - Hủy lịch hẹn kèm hộp thoại xác nhận.
   6. `Đồng bộ GlobalPageContext`: Tự động đồng bộ hóa và lọc theo Fanpage được chọn từ Header toàn cục.
 
+---
+
+### Task UX-09: Media Library & Video Downloader 2.0 (`video_workspace.py`)
+
+- **Thời gian:** 13/10/2026 13:28 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** `PENDING_COMMIT`
+- **Visual Snapshots:**
+  - `docs/redesign_screenshots/05_media_library_v2.png` (83 KB, chuẩn thiết kế mockup `05_thu_vien_media.png`).
+  - `docs/redesign_screenshots/08_video_download_v2.png` (110 KB, chuẩn thiết kế mockup `08_tai_video.png`).
+- **Command 1:** `pytest tests/test_ux09_video_workspace.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux09_video_workspace.py::test_download_tab_inspect_and_compose_now PASSED [ 25%]
+  tests/test_ux09_video_workspace.py::test_media_library_filter_and_search PASSED [ 50%]
+  tests/test_ux09_video_workspace.py::test_media_library_compose_selected_and_ac12_protection PASSED [ 75%]
+  tests/test_ux09_video_workspace.py::test_video_workspace_route_tab_switching PASSED [100%]
+  ============================== 4 passed in 1.16s ==============================
+  ```
+- **Command 2 (Full Gate):** `python -m pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 115 items
+  ...
+  ============================ 115 passed in 11.29s =============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `Tab Tải video 2.0`: Hỗ trợ dán liên kết video, lấy thông tin metadata (tiêu đề, tác giả, thời lượng) và tải thumbnail xem trước; thanh tiến độ % và tốc độ KB/s thời gian thực.
+  2. `Luồng 1-click Soạn bài (BR-06)`: Nút chuyển sang Soạn bài & Đặt lịch nổi bật khi tải xong, truyền đầy đủ đường dẫn và ID media asset sang Post Composer.
+  3. `Tab Thư viện media 2.0`: Bảng danh sách chuẩn hiển thị đầy đủ thông số video (ID, nền tảng, đường dẫn, thời lượng, dung lượng, ngày tạo) kèm nút ▶ Xem video nhanh.
+  4. `Bộ lọc nền tảng & Live Search`: Lọc tức thời theo nền tảng TikTok, Douyin, Bilibili và tìm kiếm theo tên/đường dẫn.
+  5. `EmptyState Onboarding`: Tự động chuyển đổi giữa Bảng media và EmptyState khi thư viện trống hoặc không có kết quả tìm kiếm.
+  6. `Bảo vệ xóa AC-12`: Kiểm tra nghiêm ngặt `active_job_count`; hiển thị cảnh báo đỏ và chặn xóa hoàn toàn khi file video đang được lịch đăng chờ tham chiếu.
+  7. `Thread Lifecycle Safety`: Chuẩn hóa vòng đời `QThread` gán parent và session fixture `qapp` giải quyết triệt để lỗi access violation trên Windows.
+
+
