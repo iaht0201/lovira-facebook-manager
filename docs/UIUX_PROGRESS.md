@@ -194,7 +194,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-05 — Dashboard 2.0 (`overview_workspace.py`)
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 12:46 — 13/10/2026 12:53
-- **Baseline SHA / Commit SHA:** `4afb0c5` / (đang chuẩn bị commit)
+- **Baseline SHA / Commit SHA:** `4afb0c5` / `652c7fe`
 - **Scope and no-go changes:**
   - Nâng cấp màn hình Tổng quan thành Dashboard 2.0 theo mockup `01_tong_quan.png` (khắc phục dứt điểm A-09):
     1. **Header chào thời gian thực:** Lời chào theo buổi (Sáng/Chiều/Tối), tiêu đề và subtitle rõ ràng, nút `Làm mới` và nút `+ Soạn bài ngay` (primary accent).

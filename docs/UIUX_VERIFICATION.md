@@ -192,7 +192,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 12:51 VN
 - **Branch:** `feature/uiux-redesign-v2`
-- **Commit:** (đang chuẩn bị commit)
+- **Commit:** `652c7fe`
 - **Visual Snapshot:** `docs/redesign_screenshots/01_dashboard_v2.png` (113 KB, chuẩn thiết kế mockup `01_tong_quan.png`).
 - **Command 1:** `pytest tests/test_ux05_dashboard.py -v`
 - **Kết quả Command 1:**
