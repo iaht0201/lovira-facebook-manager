@@ -72,7 +72,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-02 — Design Tokens & Theme Engine
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 12:24 — 13/10/2026 12:28
-- **Baseline SHA / Commit SHA:** `89e796c`
+- **Baseline SHA / Commit SHA:** `89e796c` / `4c34f19`
 - **Scope and no-go changes:**
   - Xây dựng hệ thống Design Tokens chuẩn hóa cho Desktop PySide6 (`tokens.py`):
     - Dark Palette (Slate / Indigo) và Light Palette (WCAG AA).
