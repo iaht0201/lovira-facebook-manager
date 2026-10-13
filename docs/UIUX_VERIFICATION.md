@@ -389,7 +389,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 13:45 VN
 - **Branch:** `feature/uiux-redesign-v2`
-- **Commit:** Pending
+- **Commit:** `20a5c54`
 - **Visual Snapshot:** `docs/redesign_screenshots/06_comments_v2.png` (18 KB, chuẩn thiết kế mockup `06_binh_luan.png`).
 - **Command 1:** `pytest tests/test_ux11_comments_workspace.py -v`
 - **Kết quả Command 1:**

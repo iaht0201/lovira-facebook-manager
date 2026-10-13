@@ -447,7 +447,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-11 — Comments Workspace 2.0 (`comments_workspace.py`)
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 13:38 — 13/10/2026 13:45
-- **Baseline SHA / Commit SHA:** `1b9b170` / Pending
+- **Baseline SHA / Commit SHA:** `1b9b170` / `20a5c54`
 - **Scope and no-go changes:**
   - Nâng cấp Quản lý Bình luận & Phản hồi nhanh 2.0 bám sát Mockup `06_binh_luan.png`:
     1. **Bố cục Split-pane chuyên nghiệp:**
