@@ -97,7 +97,7 @@ LIGHT_PALETTE = ColorTokens(
 
 @dataclass(frozen=True)
 class TypographyTokens:
-    font_family: str = '"Segoe UI", "SF Pro Display", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif'
+    font_family: str = '"Segoe UI"'
     size_hero: int = 28
     size_title: int = 22
     size_section: int = 17

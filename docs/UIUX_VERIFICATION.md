@@ -281,3 +281,40 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   4. `Schedule Invariants (AC-06/AC-41)`: Kiểm tra công tắc hẹn giờ; khi tắt công tắc ngày giờ đã chọn vẫn được bảo toàn nguyên vẹn, không bao giờ tự động đăng bài khi chưa người dùng xác nhận.
   5. `Idempotent ContentSnapshot (AC-15/AC-19)`: Đóng gói ContentSnapshot bất biến cho từng Page đích độc lập, chống bấm đúp với `client_request_id`.
   6. `Thread Safety Enhancement`: Giải quyết triệt để xung đột bộ nhớ khi hủy dialog worker trong môi trường Windows.
+
+---
+
+### Task UX-08: Schedule Workspace 2.0 (`schedule_workspace.py`)
+
+- **Thời gian:** 13/10/2026 13:12 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** `PENDING_COMMIT`
+- **Visual Snapshot:** `docs/redesign_screenshots/04_schedule_v2.png` (113 KB, chuẩn thiết kế mockup `04_lich_dang.png`).
+- **Command 1:** `pytest tests/test_ux08_schedule_workspace.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux08_schedule_workspace.py::test_schedule_workspace_kpi_and_display PASSED [ 25%]
+  tests/test_ux08_schedule_workspace.py::test_schedule_workspace_filter_and_search PASSED [ 50%]
+  tests/test_ux08_schedule_workspace.py::test_schedule_workspace_pause_and_retry PASSED [ 75%]
+  tests/test_ux08_schedule_workspace.py::test_schedule_workspace_cancel_and_global_context PASSED [100%]
+  ============================== 4 passed in 0.86s ==============================
+  ```
+- **Command 2 (Full Gate):** `pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 111 items
+  ...
+  ============================ 111 passed in 10.62s =============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `KPI Strip 4 chỉ số`: Cập nhật tự động theo hàng đợi tác vụ thực tế: Lịch trên máy, Facebook đã nhận, Đã đăng thành công, Sự cố / Cần xử lý.
+  2. `Phân biệt Lịch máy vs FB đã nhận`: Trực quan hóa qua `StatusChip` với màu sắc và nhãn tiếng Việt rõ ràng, giúp người dùng nắm bắt tình trạng tác vụ.
+  3. `Live Search & State Filters`: Lọc tức thời theo trạng thái kết hợp tìm kiếm linh hoạt theo Mã Job, Tên Fanpage hoặc Nội dung Caption.
+  4. `EmptyState Onboarding`: Tự động chuyển đổi hiển thị giữa Bảng công việc và EmptyState khi không có tác vụ nào khớp bộ lọc.
+  5. `Thao tác an toàn`:
+     - Đối chiếu trạng thái với Facebook qua `RecoveryManager.reconcile_job()` (AC-14).
+     - Tạm dừng / Tiếp tục tác vụ linh hoạt.
+     - Thử lại an toàn cho các tác vụ gặp sự cố kết nối.
+     - Hủy lịch hẹn kèm hộp thoại xác nhận.
+  6. `Đồng bộ GlobalPageContext`: Tự động đồng bộ hóa và lọc theo Fanpage được chọn từ Header toàn cục.
+

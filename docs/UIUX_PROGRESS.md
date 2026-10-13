@@ -303,3 +303,52 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
   - Không lộ thông tin nhạy cảm trên form.
 - **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Post Composer 2.0, khắc phục triệt để lỗi A-11, có visual snapshot `03_composer_v2.png`, 107/107 tests passed.
 - **Next unblocked task:** UX-08 — Schedule Workspace 2.0 (`schedule_workspace.py`).
+
+---
+
+### UX-08 — Schedule Workspace 2.0 (`schedule_workspace.py`)
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 13:05 — 13/10/2026 13:13
+- **Baseline SHA / Commit SHA:** `8756a5e` / `PENDING_COMMIT`
+- **Scope and no-go changes:**
+  - Nâng cấp Quản lý Lịch đăng & Điều phối tác vụ 2.0 theo Mockup `04_lich_dang.png`:
+    1. **Phân biệt minh bạch Lịch trên máy & Facebook đã nhận:**
+       - Tích hợp `StatusChip` trực quan hóa các trạng thái `scheduled_local` (Lịch trên máy) và `scheduled_remote` (Facebook đã nhận).
+    2. **Khung thống kê nhanh 4 chỉ số (KPI Strip):**
+       - Lịch trên máy (`lbl_kpi_local`), Facebook đã nhận (`lbl_kpi_remote`), Đã đăng thành công (`lbl_kpi_published`), Sự cố/Cần xử lý (`lbl_kpi_issues`).
+    3. **Thanh công cụ lọc & tìm kiếm nhanh:**
+       - Bộ lọc combobox `cb_filter_state` hỗ trợ lọc theo từng trạng thái cụ thể.
+       - Live search filter `search_filter` lọc thời gian thực theo Mã Job, Tên Page hoặc nội dung Caption.
+    4. **Bảng danh sách 6 cột kèm EmptyState onboarding:**
+       - 6 cột chuẩn: `Mã Job`, `Page`, `Nội dung`, `Thời điểm đăng (Giờ VN)`, `Trạng thái`, `Lý do / Lỗi`.
+       - Giờ đăng chuẩn hóa theo múi giờ Việt Nam UTC+7 qua `format_vn_display()`.
+       - Tự động hiển thị `EmptyState.no_schedules()` khi danh sách rỗng hoặc không có kết quả tìm kiếm phù hợp.
+    5. **Bộ hành động an toàn:**
+       - Đối chiếu với Facebook (AC-14) qua `RecoveryManager.reconcile_job()`.
+       - Tạm dừng / Tiếp tục (`_handle_pause_toggle`).
+       - Thử lại an toàn (`_handle_retry_job`) cho các tác vụ lỗi (`failed_retryable`, `failed_final`, `missed`).
+       - Hủy lịch đăng (`_handle_cancel_job`) với hộp thoại xác nhận.
+    6. **Tích hợp GlobalPageContext:**
+       - Tự động lọc danh sách công việc khi người dùng chuyển đổi Fanpage trên thanh tiêu đề toàn cục.
+- **Existing behavior to preserve:** Bảo toàn 100% các attribute cũ `table`, `btn_refresh`, `lbl_subtitle`, `btn_reconcile`, `reload_schedules()`, `_handle_reconcile()`, `create_schedule_requested` signal.
+- **Changed files:**
+  - `src/lovira/ui/views/schedule_workspace.py` (upgraded to 2.0)
+  - `src/lovira/ui/design/tokens.py` (fixed single font family for QSS rendering)
+  - `tests/test_ux08_schedule_workspace.py` (new - 4 test cases)
+  - `scripts/capture_schedule_v2.py` (new - visual snapshot utility)
+  - `docs/redesign_screenshots/04_schedule_v2.png` (captured visual snapshot)
+- **UI states implemented:**
+  - Bảng tác vụ với StatusChips (local, remote, published, queued, failed, missed, unknown).
+  - KPI Strip 4 chỉ số.
+  - Bộ lọc trạng thái & Live search.
+  - EmptyState khi 0 kết quả.
+  - Thao tác: Đối chiếu AC-14, Pause/Resume, Retry, Cancel.
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux08_schedule_workspace.py -v`: 4 passed in 0.86s.
+  - `pytest tests/ -v`: 111 passed in 10.62s (toàn bộ 111/111 tests xanh 100%).
+- **Security & a11y self-review:**
+  - Thao tác hủy lịch có hộp thoại xác nhận rõ ràng.
+  - Hiển thị công khai lý do lỗi / mã lỗi Facebook để người dùng chủ động xử lý.
+- **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Schedule Workspace 2.0, bảo toàn các invariant AC-14, có visual snapshot `04_schedule_v2.png`, 111/111 tests passed.
+- **Next unblocked task:** UX-09 — Media Library & Video Downloader 2.0 (`video_workspace.py`).
+
