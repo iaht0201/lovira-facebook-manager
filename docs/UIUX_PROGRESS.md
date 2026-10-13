@@ -269,7 +269,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-07 — Unified Post Composer 2.0 (`post_composer.py`)
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 12:58 — 13/10/2026 13:03
-- **Baseline SHA / Commit SHA:** `eac8595` / (đang chuẩn bị commit)
+- **Baseline SHA / Commit SHA:** `eac8595` / `096f166`
 - **Scope and no-go changes:**
   - Nâng cấp Trình Soạn bài & Đặt lịch đa Page thành Unified Composer 2.0 theo mockup `03_soan_bai.png`:
     1. **Bố cục 2 cột chuyên nghiệp:** Cột trái là Editor Form tiện lợi; Cột phải là Khung xem trước mô phỏng di động thời gian thực (`SimulatedPostPreview`).

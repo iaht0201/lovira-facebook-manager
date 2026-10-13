@@ -257,7 +257,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 13:02 VN
 - **Branch:** `feature/uiux-redesign-v2`
-- **Commit:** (đang chuẩn bị commit)
+- **Commit:** `096f166`
 - **Visual Snapshot:** `docs/redesign_screenshots/03_composer_v2.png` (131 KB, chuẩn thiết kế mockup `03_soan_bai.png`).
 - **Command 1:** `pytest tests/test_ux07_unified_composer.py -v`
 - **Kết quả Command 1:**
