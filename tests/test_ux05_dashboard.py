@@ -141,9 +141,10 @@ def test_dashboard_7day_schedule_timeline(qapp, temp_db, tmp_path):
 
     # Tạo 2 bài hôm nay và 1 bài ngày mai
     now_vn = vn_now()
-    today_iso_1 = vn_datetime_to_utc_iso(now_vn + timedelta(minutes=10))
-    today_iso_2 = vn_datetime_to_utc_iso(now_vn + timedelta(hours=3))
-    tomorrow_iso = vn_datetime_to_utc_iso(now_vn + timedelta(days=1, hours=2))
+    today_base = now_vn.replace(hour=10, minute=0, second=0, microsecond=0)
+    today_iso_1 = vn_datetime_to_utc_iso(today_base + timedelta(minutes=10))
+    today_iso_2 = vn_datetime_to_utc_iso(today_base + timedelta(hours=3))
+    tomorrow_iso = vn_datetime_to_utc_iso(today_base + timedelta(days=1, hours=2))
 
     snaps = [
         ContentSnapshot(batch_id="b1", page_id=pid, content_type=ContentType.REELS, final_caption="Bai 1", scheduled_at_utc=today_iso_1),

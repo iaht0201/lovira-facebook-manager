@@ -448,6 +448,7 @@ class FanpageMultiSelect(QWidget):
             }
         """)
         self.items.itemClicked.connect(self._on_item_clicked)
+        self.items.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.items, stretch=1)
 
         # Retain dummy members for backward compatibility
@@ -459,6 +460,14 @@ class FanpageMultiSelect(QWidget):
         for pid, it, checkbox, _ in self._rows:
             if it == item and checkbox.isEnabled():
                 checkbox.setChecked(not checkbox.isChecked())
+                break
+
+    def _on_item_changed(self, item: QListWidgetItem):
+        for pid, it, checkbox, _ in self._rows:
+            if it == item:
+                desired = (item.checkState() == Qt.CheckState.Checked)
+                if checkbox.isChecked() != desired and checkbox.isEnabled():
+                    checkbox.setChecked(desired)
                 break
 
     def set_pages(self, pages: List[Dict[str, Any]]):
@@ -482,11 +491,14 @@ class FanpageMultiSelect(QWidget):
 
             item = QListWidgetItem()
             item.setSizeHint(QSize(10, 42))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            initially_checked = (pid in old and allowed)
+            item.setCheckState(Qt.CheckState.Checked if initially_checked else Qt.CheckState.Unchecked)
             self.items.addItem(item)
 
             checkbox = QCheckBox(label)
             checkbox.setCursor(Qt.CursorShape.PointingHandCursor if allowed else Qt.CursorShape.ForbiddenCursor)
-            checkbox.setChecked(pid in old and allowed)
+            checkbox.setChecked(initially_checked)
             checkbox.setEnabled(allowed)
             checkbox.setToolTip(label)
             checkbox.setStyleSheet("""
@@ -519,7 +531,17 @@ class FanpageMultiSelect(QWidget):
                     background-color: #0E1624;
                 }
             """)
-            checkbox.toggled.connect(self._notify)
+
+            def make_handler(itm=item):
+                def handler(checked: bool):
+                    target_state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                    if itm.checkState() != target_state:
+                        with QSignalBlocker(self.items):
+                            itm.setCheckState(target_state)
+                    self._notify()
+                return handler
+
+            checkbox.toggled.connect(make_handler())
 
             self.items.setItemWidget(item, checkbox)
 
@@ -541,8 +563,8 @@ class FanpageMultiSelect(QWidget):
     def selected_page_ids(self) -> List[str]:
         return [
             pid
-            for pid, _, checkbox, _ in self._rows
-            if checkbox.isChecked() and checkbox.isEnabled()
+            for pid, itm, checkbox, _ in self._rows
+            if (checkbox.isChecked() or itm.checkState() == Qt.CheckState.Checked) and checkbox.isEnabled()
         ]
 
     def _filter(self, text: str):

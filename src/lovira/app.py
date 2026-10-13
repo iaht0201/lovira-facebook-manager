@@ -311,8 +311,27 @@ def create_application() -> MainWindow:
     view_composer.publish_enqueued.connect(lambda _: view_schedule.reload_schedules())
     view_composer.publish_enqueued.connect(lambda _: view_overview.reload_dashboard_data())
 
-    # Mặc định mở ở Dashboard (Tổng quan)
-    nav.navigate_to(Route.DASHBOARD)
+    # Khôi phục workspace đang làm việc gần nhất (hoặc mặc định Tổng quan)
+    initial_route = Route.DASHBOARD
+    last_route_file = paths.root / "last_route.txt"
+    if last_route_file.exists():
+        try:
+            saved_route_val = last_route_file.read_text(encoding="utf-8").strip()
+            for r in Route:
+                if r.value == saved_route_val:
+                    initial_route = r
+                    break
+        except Exception:
+            pass
+    nav.navigate_to(initial_route)
+
+    def _save_last_route(route_val: str) -> None:
+        try:
+            last_route_file.write_text(route_val, encoding="utf-8")
+        except Exception:
+            pass
+
+    nav.route_changed.connect(_save_last_route)
 
     # Tín hiệu khay hệ thống
     tray_manager.open_requested.connect(main_window.show)

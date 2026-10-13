@@ -79,6 +79,7 @@ QLabel#overviewGreeting {
     color: #F3F6FC;
     font-size: 17px;
     font-weight: 700;
+    padding: 2px 0px;
 }
 
 QLabel#overviewSubtitle {
@@ -247,7 +248,7 @@ class MetricCard(QFrame):
 
         if target_route:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         content = QVBoxLayout(self)
         content.setContentsMargins(13, 10, 13, 10)
@@ -412,8 +413,8 @@ class OverviewWorkspaceView(QWidget):
         canvas.setObjectName("overviewCanvas")
 
         layout = QVBoxLayout(canvas)
-        layout.setContentsMargins(16, 13, 16, 14)
-        layout.setSpacing(11)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
 
         self.scroll_area.setWidget(canvas)
 
@@ -646,6 +647,11 @@ class OverviewWorkspaceView(QWidget):
     # RESPONSIVE METRIC GRID
     # ======================================================
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if hasattr(self, "scroll_area") and self.scroll_area.verticalScrollBar():
+            self.scroll_area.verticalScrollBar().setValue(0)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
 
@@ -790,7 +796,7 @@ class OverviewWorkspaceView(QWidget):
             scoped_pages = all_pages
 
         ready_count = sum(
-            p.get("status") == "ready"
+            p.get("status") in ("ready", "unverified")
             for p in scoped_pages
         )
 
