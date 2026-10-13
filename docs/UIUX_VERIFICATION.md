@@ -95,3 +95,31 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   2. `pages_workspace.py`: Token chưa xác thực hoặc lỗi mạng không bao giờ được gán `status='ready'`. Phân biệt rõ `ready`, `unverified`, `insufficient_permissions`.
   3. `app.py`: Không còn `MagicMock` trong bootstrap runtime; fail-closed an toàn với `OfflineFallbackLicenseBackend`.
 
+---
+
+### Task UX-02: Design Tokens & Theme Engine
+
+- **Thời gian:** 13/10/2026 12:26 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Command 1:** `pytest tests/test_ux02_tokens_and_theme.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux02_tokens_and_theme.py::test_color_palettes_wcag_contrast PASSED [ 20%]
+  tests/test_ux02_tokens_and_theme.py::test_stylesheet_zero_duplicate_selectors PASSED [ 40%]
+  tests/test_ux02_tokens_and_theme.py::test_density_modes_metrics PASSED   [ 60%]
+  tests/test_ux02_tokens_and_theme.py::test_svg_vector_icon_rendering PASSED [ 80%]
+  tests/test_ux02_tokens_and_theme.py::test_theme_manager_switch_and_signal PASSED [100%]
+  ============================== 5 passed in 0.23s ==============================
+  ```
+- **Command 2 (Full Gate):** `pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 84 items
+  ============================= 84 passed in 6.34s ==============================
+  ```
+- **Xác minh tiêu chuẩn:**
+  1. WCAG AA Contrast: `text_primary` đạt contrast ratio >= 4.5:1 trên cả Dark và Light palette.
+  2. QSS Linter: 0 duplicate selectors trong stylesheet phân tầng.
+  3. SVG Icons: 100% vector SVG (Lucide style) load và render thành công trên QIcon / QPixmap mà không dùng font ngoài.
+
+
