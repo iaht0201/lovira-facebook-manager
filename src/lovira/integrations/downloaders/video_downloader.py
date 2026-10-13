@@ -68,9 +68,24 @@ class VideoDownloader:
     """Điều phối trích xuất thông tin và tải video an toàn ngoài luồng UI."""
 
     @staticmethod
-    def detect_platform(url: str) -> SupportedPlatform:
-        """Nhận diện nền tảng từ URL."""
-        clean_url = url.lower()
+    def clean_url(text: str) -> str:
+        """
+        Trích xuất URL hợp lệ từ chuỗi văn bản bất kỳ (ví dụ tin nhắn chia sẻ Douyin, TikTok).
+        Tự động tách link nằm giữa các hashtag, tiêu đề hoặc ký tự tiếng Trung/dấu câu.
+        """
+        if not text:
+            return ""
+        text = text.strip()
+        match = re.search(r"https?://[a-zA-Z0-9\-._~:/?#\[\]@!$&'*+,;=%]+", text)
+        if match:
+            clean = match.group(0).rstrip(".,;:!?'\"，。！？")
+            return clean
+        return text
+
+    @classmethod
+    def detect_platform(cls, url: str) -> SupportedPlatform:
+        """Nhận diện nền tảng từ URL hoặc đoạn văn bản chia sẻ."""
+        clean_url = cls.clean_url(url).lower()
         if "douyin.com" in clean_url or "iesdouyin.com" in clean_url:
             return SupportedPlatform.DOUYIN
         if "tiktok.com" in clean_url:
@@ -99,6 +114,7 @@ class VideoDownloader:
 
     def extract_metadata(self, url: str) -> VideoMetadata:
         """Trích xuất thông tin metadata video mà không tải dữ liệu media."""
+        url = self.clean_url(url)
         platform = self.detect_platform(url)
 
         ydl_opts: Dict[str, Any] = {
@@ -152,6 +168,7 @@ class VideoDownloader:
         - Kiểm tra cờ is_cancelled để dừng kịp thời
         - Trả về đường dẫn file `.mp4` hoàn chỉnh
         """
+        url = self.clean_url(url)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 

@@ -130,3 +130,12 @@ def test_media_library_tab_delete_protection_ac12(qapp, temp_db, tmp_path):
 
     # Kiểm tra asset vẫn còn nguyên trong DB, không bị xóa
     assert media_repo.get_media_asset(asset_id) is not None
+
+
+def test_clean_url_douyin_share_text():
+    """Kiểm tra trích xuất link sạch từ văn bản copy chia sẻ từ app Douyin/TikTok."""
+    raw_share_text = "3.35 04/13 :8pm gOx:/ Y@m.qR # 被萌娃和狗狗治愈了 # 丧彪 # 这个世界不能没有小狗  https://v.douyin.com/pCDZmEmURLw/ 复制此链接，打开Dou音搜索，直接观看视频！"
+    cleaned = VideoDownloader.clean_url(raw_share_text)
+    assert cleaned == "https://v.douyin.com/pCDZmEmURLw/"
+    assert VideoDownloader.detect_platform(raw_share_text) == SupportedPlatform.DOUYIN
+

@@ -101,13 +101,13 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_platform(url: str) -> str:
-    """Xác định nền tảng nguồn từ URL video."""
-    u = (url or "").lower()
-    if "douyin" in u:
+    """Xác định nền tảng nguồn từ URL video hoặc đoạn văn bản chia sẻ."""
+    u = VideoDownloader.clean_url(url).lower()
+    if "douyin" in u or "iesdouyin" in u:
         return "douyin"
     if "tiktok" in u:
         return "tiktok"
-    if "bilibili" in u:
+    if "bilibili" in u or "b23.tv" in u:
         return "bilibili"
     return "other"
 
@@ -495,10 +495,14 @@ class VideoDownloadTab(QWidget):
         layout.addWidget(self.mode_tabs)
 
     def _inspect_video(self) -> None:
-        url = self.url_input.text().strip()
+        raw_url = self.url_input.text().strip()
+        url = VideoDownloader.clean_url(raw_url)
         if not url:
             QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập liên kết video.")
             return
+
+        if url != raw_url:
+            self.url_input.setText(url)
 
         self.btn_inspect.setEnabled(False)
         self.btn_inspect.setText("Đang phân tích...")
@@ -532,10 +536,14 @@ class VideoDownloadTab(QWidget):
                 logger.debug(f"Không thể tải thumbnail từ URL: {e}")
 
     def _start_download(self) -> None:
-        url = self.url_input.text().strip()
+        raw_url = self.url_input.text().strip()
+        url = VideoDownloader.clean_url(raw_url)
         if not url:
             QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập liên kết video.")
             return
+
+        if url != raw_url:
+            self.url_input.setText(url)
 
         self.btn_download.setEnabled(False)
         self.btn_cancel.setEnabled(True)
@@ -635,7 +643,12 @@ class VideoDownloadTab(QWidget):
     # --- BATCH DOWNLOAD LOGIC ---
     def _start_batch_download(self) -> None:
         raw_text = self.batch_text_edit.toPlainText().strip()
-        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        lines = []
+        for line in raw_text.splitlines():
+            clean = VideoDownloader.clean_url(line)
+            if clean:
+                lines.append(clean)
+
         if not lines:
             QMessageBox.warning(self, "Chưa nhập link", "Vui lòng nhập ít nhất một liên kết video.")
             return
