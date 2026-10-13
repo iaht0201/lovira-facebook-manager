@@ -309,7 +309,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-08 — Schedule Workspace 2.0 (`schedule_workspace.py`)
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 13:05 — 13/10/2026 13:13
-- **Baseline SHA / Commit SHA:** `8756a5e` / `PENDING_COMMIT`
+- **Baseline SHA / Commit SHA:** `8756a5e` / `dbfb4df`
 - **Scope and no-go changes:**
   - Nâng cấp Quản lý Lịch đăng & Điều phối tác vụ 2.0 theo Mockup `04_lich_dang.png`:
     1. **Phân biệt minh bạch Lịch trên máy & Facebook đã nhận:**

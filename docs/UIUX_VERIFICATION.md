@@ -288,7 +288,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 13:12 VN
 - **Branch:** `feature/uiux-redesign-v2`
-- **Commit:** `PENDING_COMMIT`
+- **Commit:** `dbfb4df`
 - **Visual Snapshot:** `docs/redesign_screenshots/04_schedule_v2.png` (113 KB, chuẩn thiết kế mockup `04_lich_dang.png`).
 - **Command 1:** `pytest tests/test_ux08_schedule_workspace.py -v`
 - **Kết quả Command 1:**
