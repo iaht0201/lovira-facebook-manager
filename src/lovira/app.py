@@ -8,6 +8,7 @@ Lovira-Facebook Manager
 - Nối các tín hiệu điều hướng: 1-click từ Video Workspace sang Post Composer (BR-06)
 """
 
+import os
 import sys
 import logging
 from pathlib import Path
@@ -100,15 +101,24 @@ def create_application() -> MainWindow:
     downloader = VideoDownloader()
     media_processor = MediaProcessor()
 
-    # 4. License & Policy
+    # 4. License & Policy (UX-01: An toàn sản phẩm, không dùng MagicMock trong runtime)
     device_id = get_or_create_device_id(paths.config_dir)
     fingerprint = get_device_fingerprint(device_id)
 
-    # Mock backend cho MVP offline khi chưa cấu hình Supabase URL thực
-    from unittest.mock import MagicMock
-    mock_license_backend = MagicMock()
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    supabase_key = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+
+    if supabase_url and supabase_key:
+        from src.lovira.licensing.supabase_adapter import SupabaseAdapter
+        license_backend = SupabaseAdapter(supabase_url=supabase_url, anon_key=supabase_key)
+        logger.info("Đã cấu hình Supabase License Backend từ biến môi trường.")
+    else:
+        from src.lovira.licensing.client import OfflineFallbackLicenseBackend
+        license_backend = OfflineFallbackLicenseBackend()
+        logger.info("Chưa có cấu hình Supabase Server; khởi động chế độ Offline/Cục bộ an toàn.")
+
     license_client = LicenseClient(
-        backend=mock_license_backend,
+        backend=license_backend,
         device_id=device_id,
         fingerprint=fingerprint,
     )

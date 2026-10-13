@@ -112,6 +112,7 @@ def test_connect_page_dialog_direct_page_id(qapp, temp_db, tmp_path):
     dialog.input_page_token.setText("EAAB_test_page_token")
 
     with patch.object(fb_client, "inspect_token", return_value=None), \
+         patch.object(QMessageBox, "warning"), \
          patch.object(QMessageBox, "information"):
         dialog._handle_connect()
 
@@ -119,6 +120,7 @@ def test_connect_page_dialog_direct_page_id(qapp, temp_db, tmp_path):
     assert len(pages) == 1
     assert pages[0]["facebook_page_id"] == "9988776655"
     assert pages[0]["name"] == "Lovira Page Truc Tiep"
+    assert pages[0]["status"] == "unverified"
 
 
 def test_bulk_import_dialog_export_and_process(qapp, temp_db, tmp_path):

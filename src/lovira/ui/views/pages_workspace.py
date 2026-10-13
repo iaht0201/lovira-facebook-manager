@@ -142,31 +142,52 @@ class ConnectPageDialog(QDialog):
             self.btn_connect.setEnabled(False)
             self.btn_connect.setText("Đang kết nối...")
 
-            # Thử inspect token qua Graph API
+            # Thử inspect token qua Graph API (UX-01 P0 safety check)
             token_info = self.fb.inspect_token(token)
             resolved_name = custom_name or f"Fanpage {page_id}"
-            tasks = ["MANAGE", "CREATE_CONTENT"]
 
             if token_info and token_info.is_valid:
                 if token_info.name:
                     resolved_name = custom_name or token_info.name
-                if token_info.tasks:
-                    tasks = token_info.tasks
+                tasks = token_info.tasks if token_info.tasks else ["MANAGE", "CREATE_CONTENT"]
+                has_publish_perm = any(t in ["CREATE_CONTENT", "MANAGE", "PUBLISH_TO_PAGE"] for t in tasks)
+                status = "ready" if has_publish_perm else "insufficient_permissions"
 
-            # Lưu vào PageRepository và SecretVault
-            pid = self.repo.upsert_page(
-                facebook_page_id=page_id,
-                name=resolved_name,
-                status="ready",
-            )
-            self.repo.save_page_token(pid, token, tasks=tasks)
+                pid = self.repo.upsert_page(
+                    facebook_page_id=page_id,
+                    name=resolved_name,
+                    status=status,
+                )
+                self.repo.save_page_token(pid, token, tasks=tasks)
 
-            QMessageBox.information(
-                self,
-                "Kết nối thành công",
-                f"Đã lưu và liên kết Fanpage thành công!\n• Tên Page: {resolved_name}\n• Page ID: {page_id}",
-            )
-            self.accept()
+                if status == "ready":
+                    QMessageBox.information(
+                        self,
+                        "Kết nối thành công",
+                        f"Đã xác thực và liên kết Fanpage thành công!\n• Tên Page: {resolved_name}\n• Page ID: {page_id}\n• Trạng thái: Sẵn sàng",
+                    )
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Thiếu quyền đăng bài",
+                        f"Đã lưu Fanpage nhưng Access Token thiếu quyền tạo nội dung (CREATE_CONTENT).\n• Tên Page: {resolved_name}\n• Trạng thái: Thiếu quyền",
+                    )
+                self.accept()
+            else:
+                # Không xác thực được hoặc token không hợp lệ -> CẤM lưu status='ready'
+                pid = self.repo.upsert_page(
+                    facebook_page_id=page_id,
+                    name=resolved_name,
+                    status="unverified",
+                )
+                self.repo.save_page_token(pid, token, tasks=[])
+                QMessageBox.warning(
+                    self,
+                    "Chưa xác thực được Token",
+                    f"Không thể xác thực Access Token với Facebook (lỗi mạng hoặc token không hợp lệ).\n"
+                    f"Fanpage được lưu ở trạng thái 'Chưa xác minh' (unverified) và KHÔNG THỂ đăng bài cho đến khi kết nối lại thành công.",
+                )
+                self.accept()
 
         else:
             # Tab 2: Quét tự động từ User Token

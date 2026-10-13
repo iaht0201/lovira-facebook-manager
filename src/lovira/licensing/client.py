@@ -52,6 +52,56 @@ class LicenseBackendProtocol(Protocol):
         ...
 
 
+class OfflineFallbackLicenseBackend:
+    """
+    Backend dự phòng an toàn khi chưa cấu hình máy chủ Supabase thực tế.
+    Trả về kết quả rõ ràng (fail-closed) thay vì dùng MagicMock trong production.
+    """
+
+    def __init__(self, message: str = "Chưa cấu hình máy chủ bản quyền Supabase. Ứng dụng đang chạy ở chế độ Offline/Cục bộ."):
+        self.message = message
+
+    def activate(
+        self,
+        key: str,
+        device_id: str,
+        fingerprint: str,
+        app_version: str,
+        force_transfer: bool,
+    ) -> ActivationResult:
+        return ActivationResult(
+            success=False,
+            error_code=LicenseErrorCode.NETWORK_ERROR,
+            error_message=self.message,
+        )
+
+    def heartbeat(
+        self,
+        session_id: str,
+        generation: int,
+        session_token: str,
+        device_id: str,
+    ) -> HeartbeatResult:
+        return HeartbeatResult(
+            success=False,
+            is_revoked=False,
+            is_expired=True,
+            error_message=self.message,
+        )
+
+    def authorize(
+        self,
+        session_id: str,
+        generation: int,
+        session_token: str,
+        action: str,
+    ) -> Tuple[bool, str]:
+        return False, self.message
+
+    def logout(self, session_id: str, session_token: str) -> bool:
+        return True
+
+
 class LicenseClient:
     """Quản lý trạng thái phiên bản quyền và bảo vệ quyền thực thi."""
 

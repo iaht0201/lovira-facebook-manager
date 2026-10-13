@@ -66,3 +66,32 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   - `docs/baseline_screenshots/10_bulk_import_dialog.png`
   - `docs/baseline_screenshots/11_license_dialog.png`
 - **Đánh giá:** 100% test bộ cơ sở xanh. Codebase sẵn sàng cho chiến dịch redesign.
+
+---
+
+### Task UX-01: Safety Fixes & P0 Audit
+
+- **Thời gian:** 13/10/2026 12:22 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** Sau khi commit task UX-01
+- **Command 1:** `pytest tests/test_ux01_safety_fixes.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux01_safety_fixes.py::test_bulk_import_empty_or_unknown_page_id_no_fallback PASSED [ 25%]
+  tests/test_ux01_safety_fixes.py::test_connect_page_direct_valid_token_marks_ready PASSED [ 50%]
+  tests/test_ux01_safety_fixes.py::test_connect_page_direct_insufficient_perms_marks_status PASSED [ 75%]
+  tests/test_ux01_safety_fixes.py::test_offline_fallback_license_backend_fail_closed PASSED [100%]
+  ============================== 4 passed in 1.67s ==============================
+  ```
+- **Command 2 (Full Gate):** `pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 79 items
+  ...
+  ============================= 79 passed in 5.73s ==============================
+  ```
+- **Các lỗ hổng P0 đã được khắc phục:**
+  1. `bulk_import_dialog.py`: Dòng thiếu hoặc sai Page ID không bao giờ fallback sang all pages. Chỉ gán all khi người dùng truyền từ khóa tường minh `ALL`.
+  2. `pages_workspace.py`: Token chưa xác thực hoặc lỗi mạng không bao giờ được gán `status='ready'`. Phân biệt rõ `ready`, `unverified`, `insufficient_permissions`.
+  3. `app.py`: Không còn `MagicMock` trong bootstrap runtime; fail-closed an toàn với `OfflineFallbackLicenseBackend`.
+

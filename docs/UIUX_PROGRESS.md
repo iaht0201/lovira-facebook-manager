@@ -10,7 +10,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 | Task | Tên nhiệm vụ | Mức độ | Phụ thuộc | Trạng thái | Hoàn thành |
 |---|---|---|---|---|---|
 | **UX-00** | Baseline Verification & Setup | P0 | — | **DONE** | 13/10/2026 |
-| **UX-01** | Safety Fixes & P0 Audit | P0 | UX-00 | TODO | — |
+| **UX-01** | Safety Fixes & P0 Audit | P0 | UX-00 | **DONE** | 13/10/2026 |
 | **UX-02** | Design Tokens & Theme Engine | P1 | UX-00 | TODO | — |
 | **UX-03** | Desktop Shell & 10 Routes | P0 | UX-02 | TODO | — |
 | **UX-04** | Shared UI Primitives | P1 | UX-03 | TODO | — |
@@ -32,37 +32,38 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 12:00 — 13/10/2026 12:15
 - **Baseline SHA:** `4959814229ce2d39c06332ab9ce91030fa6e04da`
+- **Scope and no-go changes:** Khởi tạo branch `feature/uiux-redesign-v2`, kiểm tra 75 tests baseline, tạo tài liệu quy chuẩn, chụp 11 snapshot screenshots.
+- **Why DONE is justified:** Baseline SHA đã ghim, 75/75 tests passed, 11 ảnh baseline đã tạo, branch sẵn sàng.
+
+---
+
+### UX-01 — Safety Fixes & P0 Audit
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 12:17 — 13/10/2026 12:25
+- **Baseline SHA / Commit SHA:** `487742d`
 - **Scope and no-go changes:** 
-  - Khởi tạo nhánh `feature/uiux-redesign-v2` từ commit baseline `4959814`.
-  - Chạy full test suite để xác minh 100% xanh trước khi can thiệp.
-  - Thiết lập tài liệu tracking: `UIUX_REDESIGN_PLANNING.md`, `UIUX_PROGRESS.md`, `UIUX_VERIFICATION.md`.
-  - Chụp snapshot baseline đầy đủ 11 màn hình/dialog hiện trạng của ứng dụng để làm đối chiếu.
-  - Không thay đổi bất kỳ file mã nguồn logic nào trong task này.
-- **Existing behavior to preserve:** Toàn bộ 75 tests pass và các workflow cơ bản đang chạy.
+  - Khắc phục triệt để 3 rủi ro an toàn dữ liệu và quyền hạn (P0):
+    1. `bulk_import_dialog.py`: Ngăn chặn hoàn toàn việc silent fallback sang tất cả Fanpage khi `Page_IDs` rỗng hoặc không khớp. Chỉ khi người dùng chỉ định rõ `ALL` mới đăng đa Page. Các dòng lỗi bị bỏ qua và cảnh báo trên preview table.
+    2. `pages_workspace.py`: Khi kết nối direct Page token, nếu `inspect_token` thất bại hoặc không xác thực được qua mạng, lưu Page ở trạng thái `unverified` và không cấp quyền đăng bài, cảnh báo rõ ràng thay vì gán `ready`. Phân biệt rõ quyền `CREATE_CONTENT` / `MANAGE`.
+    3. `app.py` & licensing: Loại bỏ hoàn toàn `MagicMock` trong production runtime. Hỗ trợ nạp `SupabaseAdapter` từ ENV hoặc fallback an toàn sang `OfflineFallbackLicenseBackend` (fail-closed, từ chối kích hoạt giả và AccessPolicyManager chặn các hành vi publish khi không có license).
+- **Existing behavior to preserve:** SQLite WAL, SecretVault, ContentSnapshot, múi giờ Việt Nam, toàn bộ nghiệp vụ nền tảng.
 - **Changed files:**
-  - `docs/UIUX_REDESIGN_PLANNING.md` (tài liệu quy hoạch)
-  - `docs/UIUX_PROGRESS.md` (theo dõi tiến độ từng task)
-  - `docs/UIUX_VERIFICATION.md` (bằng chứng kiểm thử)
-  - `scripts/capture_baseline_ui.py` (script chụp ảnh baseline)
-  - `docs/baseline_screenshots/*` (11 ảnh baseline)
-- **UI states implemented:** Baseline snapshot các view & dialogs:
-  - `01_overview_dashboard.png`: Dashboard 4 cards + quick actions + recent jobs
-  - `02_fanpage_workspace.png`: Danh sách Page & actions
-  - `03_video_workspace.png`: Download tab & media library
-  - `04_schedule_workspace.png`: Danh sách lịch đặt & bộ lọc
-  - `05_comments_placeholder.png`: Màn hình bình luận hiện trạng (placeholder QLabel)
-  - `06_settings_workspace.png`: Cài đặt & backup SQLite
-  - `07_post_composer_workspace.png`: Trình soạn thảo bài viết đầy đủ
-  - `08_quick_post_dialog.png`: Popup tạo bài nhanh
-  - `09_connect_page_dialog.png`: Dialog kết nối Fanpage (Direct token / User scan)
-  - `10_bulk_import_dialog.png`: Dialog nhập file Excel/CSV
-  - `11_license_dialog.png`: Dialog kích hoạt bản quyền
+  - `src/lovira/licensing/client.py`: Thêm `OfflineFallbackLicenseBackend`.
+  - `src/lovira/app.py`: Thay `MagicMock` bằng cấu hình Supabase thực hoặc `OfflineFallbackLicenseBackend`.
+  - `src/lovira/ui/views/pages_workspace.py`: Chặn gán `status='ready'` khi token chưa được verify hoặc thiếu quyền.
+  - `src/lovira/ui/views/bulk_import_dialog.py`: Kiểm tra nghiêm ngặt `Page_IDs`, loại bỏ silent fallback all pages, hiển thị cảnh báo trên preview table.
+  - `tests/test_ux_enhancements.py`: Cập nhật assert status `unverified` khi token inspection trả về None.
+  - `tests/test_ux01_safety_fixes.py`: Bộ test mới 4 test cases kiểm tra nghiêm ngặt 3 lỗi P0.
+- **UI states implemented:**
+  - Connect Page: Trạng thái cảnh báo khi token không xác thực được (`unverified`), trạng thái cảnh báo khi token thiếu quyền (`insufficient_permissions`).
+  - Bulk Import Preview: Đánh dấu `⚠️ Thiếu Page ID` hoặc `⚠️ Page ID lạ`, vô hiệu hóa import khi không có dòng hợp lệ nào.
+  - Licensing: Fail-closed rõ ràng khi chưa có backend hoặc offline.
 - **Exact tests executed and results:**
-  - `pytest tests/ -v`: 75 passed in 5.24s.
-- **Critical bugs identified for UX-01:**
-  1. `src/lovira/app.py`: `MagicMock` khởi tạo license backend startup.
-  2. `src/lovira/ui/views/pages_workspace.py`: Fallback gán `status='ready'` khi `inspect_token` thất bại/timeout.
-  3. `src/lovira/ui/views/bulk_import_dialog.py`: Worker tự động fallback sang "tất cả Pages" khi `Page_IDs` rỗng hoặc không khớp.
-  4. `src/lovira/ui/main_window.py`: Route comments bị rỗng; composer view thiếu nav entry trên sidebar.
-- **Why DONE is justified:** Baseline SHA đã ghim, 75/75 tests passed, 11 ảnh baseline đã tạo, tài liệu tracking đầy đủ, branch `feature/uiux-redesign-v2` đã sẵn sàng.
-- **Next unblocked task:** UX-01 — Safety Fixes & P0 Audit.
+  - `pytest tests/test_ux01_safety_fixes.py -v`: 4 passed in 1.67s.
+  - `pytest tests/ -v`: 79 passed in 5.73s (toàn bộ 79/79 test suites xanh).
+- **Security & concurrency self-review:**
+  - Token Facebook không bao giờ bị log/leak, luôn lưu qua SecretVault.
+  - Không thể vô tình đăng bài lên Fanpage không chủ ý do lỗi nhập liệu trong sheet Excel.
+  - Không có backdoor/bypass license trong runtime desktop.
+- **Why DONE is justified:** Cả 3 lỗi P0 chỉ định trong planning đã được sửa đúng root-cause, có test failure/regression bảo vệ, và toàn bộ 79 tests đều pass 100%.
+- **Next unblocked task:** UX-02 — Design Tokens & Theme Engine.

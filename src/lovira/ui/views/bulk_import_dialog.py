@@ -82,18 +82,24 @@ class BulkImportWorker(QThread):
 
                 self.progress_updated.emit(idx, total, f"Đang xử lý dòng {idx}/{total}: {title or 'Bài viết'}")
 
-                # 1. Xác định Page đích
+                # 1. Xác định Page đích (UX-01 P0: CẤM silent fallback sang toàn bộ Page)
                 target_internal_page_ids = []
-                if page_ids_str:
-                    for fb_pid in page_ids_str.split(","):
-                        fb_pid = fb_pid.strip()
+                raw_page_tokens = [p.strip() for p in page_ids_str.split(",") if p.strip()]
+
+                if any(p.upper() in ["ALL", "TAT_CA", "TẤT_CẢ", "TATCA", "*"] for p in raw_page_tokens):
+                    # Chỉ đăng lên tất cả Page khi người dùng chỉ định tường minh từ khóa ALL/TAT_CA
+                    target_internal_page_ids = list(all_internal_ids)
+                elif raw_page_tokens:
+                    for fb_pid in raw_page_tokens:
                         if fb_pid in page_id_map:
                             target_internal_page_ids.append(page_id_map[fb_pid])
-                if not target_internal_page_ids:
-                    target_internal_page_ids = all_internal_ids
+                else:
+                    # Page_IDs rỗng: Tuyệt đối không fallback sang all_internal_ids
+                    pass
 
                 if not target_internal_page_ids:
-                    continue  # Không có page nào để đăng
+                    # Hàng không có Page ID hợp lệ -> bỏ qua an toàn, không tạo job rác
+                    continue
 
                 # 2. Xử lý video (từ link hoặc từ file local)
                 local_video_path = None
@@ -368,18 +374,47 @@ class BulkImportDialog(QDialog):
                 QMessageBox.warning(self, "File rỗng", "Không tìm thấy dòng dữ liệu nào trong file.")
                 return
 
-            # Hiển thị lên bảng preview
+            # Hiển thị lên bảng preview (kèm kiểm tra hợp lệ Page ID - UX-01)
+            all_pages = self.page_repo.list_pages()
+            known_fb_ids = {p["facebook_page_id"] for p in all_pages}
+            valid_count = 0
+            invalid_count = 0
+
             self.table_preview.setRowCount(len(self.loaded_rows))
             for row_idx, r in enumerate(self.loaded_rows):
                 self.table_preview.setItem(row_idx, 0, QTableWidgetItem(str(r.get("TieuDe", ""))))
                 self.table_preview.setItem(row_idx, 1, QTableWidgetItem(str(r.get("NoiDung_Caption", ""))))
                 self.table_preview.setItem(row_idx, 2, QTableWidgetItem(str(r.get("Video_Link_Hoac_File", ""))))
-                self.table_preview.setItem(row_idx, 3, QTableWidgetItem(str(r.get("Page_IDs", ""))))
+
+                raw_page_ids = str(r.get("Page_IDs", "")).strip()
+                tokens = [p.strip() for p in raw_page_ids.split(",") if p.strip()]
+                is_all = any(t.upper() in ["ALL", "TAT_CA", "TẤT_CẢ", "TATCA", "*"] for t in tokens)
+                matched = [t for t in tokens if t in known_fb_ids]
+
+                page_item = QTableWidgetItem(raw_page_ids)
+                if is_all:
+                    page_item.setText("Tất cả Page (ALL)")
+                    valid_count += 1
+                elif matched:
+                    valid_count += 1
+                else:
+                    invalid_count += 1
+                    if not raw_page_ids:
+                        page_item.setText("⚠️ Thiếu Page ID")
+                    else:
+                        page_item.setText(f"⚠️ {raw_page_ids} (Không tìm thấy)")
+
+                self.table_preview.setItem(row_idx, 3, page_item)
                 self.table_preview.setItem(row_idx, 4, QTableWidgetItem(str(r.get("NgayGioDang_VN", ""))))
                 self.table_preview.setItem(row_idx, 5, QTableWidgetItem(str(r.get("LoaiDang", "reels"))))
 
-            self.btn_start_import.setEnabled(True)
-            self.lbl_status.setText(f"Đã nạp {len(self.loaded_rows)} bài viết từ file. Nhấn nút bên dưới để tiến hành lên lịch!")
+            self.btn_start_import.setEnabled(valid_count > 0)
+            if invalid_count > 0:
+                self.lbl_status.setText(
+                    f"Đã nạp {len(self.loaded_rows)} dòng ({valid_count} hợp lệ, {invalid_count} dòng thiếu/sai Page ID sẽ bị bỏ qua an toàn)."
+                )
+            else:
+                self.lbl_status.setText(f"Đã nạp {len(self.loaded_rows)} bài viết hợp lệ. Nhấn nút bên dưới để tiến hành lên lịch!")
         except Exception as e:
             QMessageBox.critical(self, "Lỗi đọc file", f"Không thể đọc file:\n{e}")
 
