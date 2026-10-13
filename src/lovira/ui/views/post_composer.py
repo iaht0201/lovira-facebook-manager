@@ -2003,6 +2003,11 @@ class PostComposerView(QWidget):
         )
 
     def _media_finished(self):
+        if self._worker is not None:
+            try:
+                self._worker.wait(100)
+            except Exception:
+                pass
         self._worker = None
 
         self.btn_cancel_download.hide()

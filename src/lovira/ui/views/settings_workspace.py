@@ -14,7 +14,7 @@ import os
 import sys
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -97,8 +97,7 @@ class SettingsWorkspaceView(QWidget):
         layout.addWidget(top_frame)
 
         # 2. Section 1: Giao diện & Trải nghiệm
-        sec_ui = self._create_card_section("1. Giao diện & Trải nghiệm người dùng")
-        sec_ui_layout = QVBoxLayout(sec_ui)
+        sec_ui, sec_ui_layout = self._create_card_section("1. Giao diện & Trải nghiệm người dùng")
         sec_ui_layout.setSpacing(12)
 
         # Chế độ giao diện (Dark / Light)
@@ -137,8 +136,7 @@ class SettingsWorkspaceView(QWidget):
         layout.addWidget(sec_ui)
 
         # 3. Section 2: Cấu hình Đăng bài & Điều phối
-        sec_sched = self._create_card_section("2. Cấu hình Đăng bài & Tránh Spam Meta")
-        sec_sched_layout = QVBoxLayout(sec_sched)
+        sec_sched, sec_sched_layout = self._create_card_section("2. Cấu hình Đăng bài & Tránh Spam Meta")
         sec_sched_layout.setSpacing(12)
 
         interval_row = QHBoxLayout()
@@ -163,8 +161,7 @@ class SettingsWorkspaceView(QWidget):
         layout.addWidget(sec_sched)
 
         # 4. Section 3: Media & Bộ nhớ đệm
-        sec_media = self._create_card_section("3. Lưu trữ Video & Dọn dẹp Bộ nhớ đệm")
-        sec_media_layout = QVBoxLayout(sec_media)
+        sec_media, sec_media_layout = self._create_card_section("3. Lưu trữ Video & Dọn dẹp Bộ nhớ đệm")
         sec_media_layout.setSpacing(12)
 
         path_row = QHBoxLayout()
@@ -194,8 +191,7 @@ class SettingsWorkspaceView(QWidget):
         layout.addWidget(sec_media)
 
         # 5. Section 4: Sao lưu & Phục hồi Cơ sở dữ liệu (AC-22)
-        sec_backup = self._create_card_section("4. Sao lưu & Bảo toàn Dữ liệu (SQLite WAL - AC-22)")
-        sec_backup_layout = QVBoxLayout(sec_backup)
+        sec_backup, sec_backup_layout = self._create_card_section("4. Sao lưu & Bảo toàn Dữ liệu (SQLite WAL - AC-22)")
         sec_backup_layout.setSpacing(10)
 
         desc_backup = QLabel(
@@ -224,8 +220,7 @@ class SettingsWorkspaceView(QWidget):
         layout.addWidget(sec_backup)
 
         # 6. Section 5: Bản quyền & Thiết bị (AC-23, BR-11, A-17)
-        sec_license = self._create_card_section("5. Thông tin Bản quyền & Thiết bị (BR-11, A-17)")
-        sec_lic_layout = QVBoxLayout(sec_license)
+        sec_license, sec_lic_layout = self._create_card_section("5. Thông tin Bản quyền & Thiết bị (BR-11, A-17)")
         sec_lic_layout.setSpacing(10)
 
         # Device ID có nút Copy
@@ -262,8 +257,7 @@ class SettingsWorkspaceView(QWidget):
         layout.addWidget(sec_license)
 
         # 7. Section 6: Chẩn đoán & Toàn vẹn hệ thống
-        sec_diag = self._create_card_section("6. Chẩn đoán & Toàn vẹn Hệ thống")
-        sec_diag_layout = QVBoxLayout(sec_diag)
+        sec_diag, sec_diag_layout = self._create_card_section("6. Chẩn đoán & Toàn vẹn Hệ thống")
         sec_diag_layout.setSpacing(8)
 
         lbl_app_ver = QLabel("• Phiên bản ứng dụng: Lovira Desktop 2.0 (Native PySide6 / SQLite WAL)")
@@ -280,7 +274,7 @@ class SettingsWorkspaceView(QWidget):
         scroll_area.setWidget(container)
         main_layout.addWidget(scroll_area)
 
-    def _create_card_section(self, title: str) -> QFrame:
+    def _create_card_section(self, title: str) -> Tuple[QFrame, QVBoxLayout]:
         card = QFrame()
         card.setObjectName("cardFrame")
         layout = QVBoxLayout(card)
@@ -290,7 +284,7 @@ class SettingsWorkspaceView(QWidget):
         lbl = QLabel(title)
         lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #E2E8F0;")
         layout.addWidget(lbl)
-        return card
+        return card, layout
 
     # --- Handlers ---
 

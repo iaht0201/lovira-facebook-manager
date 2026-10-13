@@ -1455,7 +1455,9 @@ class VideoDownloadTab(QWidget):
         self._update_ui_state()
 
     def _on_metadata_ready(self, task_id: str, meta: dict) -> None:
-        self.metadata_workers.pop(task_id, None)
+        worker = self.metadata_workers.pop(task_id, None)
+        if worker:
+            worker.wait(100)
         self.model.update_task(
             task_id,
             title=meta.get("title", "Video không tên"),
@@ -1468,7 +1470,9 @@ class VideoDownloadTab(QWidget):
         self._update_ui_state()
 
     def _on_metadata_error(self, task_id: str, err: str) -> None:
-        self.metadata_workers.pop(task_id, None)
+        worker = self.metadata_workers.pop(task_id, None)
+        if worker:
+            worker.wait(100)
         self.model.update_task(
             task_id,
             state="META_FAILED",
@@ -1544,7 +1548,9 @@ class VideoDownloadTab(QWidget):
         self.model.update_task(task_id, progress_percent=percent, speed_text=speed)
 
     def _on_worker_success(self, task_id: str, file_path: str, detected_platform: str) -> None:
-        self.active_workers.pop(task_id, None)
+        worker = self.active_workers.pop(task_id, None)
+        if worker:
+            worker.wait(100)
         task = self.model.get_task(task_id)
         if not task:
             self._pump_queue()
@@ -1599,7 +1605,9 @@ class VideoDownloadTab(QWidget):
         self._update_ui_state()
 
     def _on_worker_error(self, task_id: str, err: str) -> None:
-        self.active_workers.pop(task_id, None)
+        worker = self.active_workers.pop(task_id, None)
+        if worker:
+            worker.wait(100)
         self.model.update_task(task_id, state="FAILED", error_message=err, speed_text="")
         self._pump_queue()
         self._update_ui_state()
