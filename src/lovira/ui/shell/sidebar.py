@@ -33,7 +33,7 @@ class AppSidebar(QFrame):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("sidebarFrame")
-        self.setFixedWidth(236)
+        self.setFixedWidth(240)
         self.is_collapsed = False
         self._buttons: Dict[Route, QPushButton] = {}
         self._button_group = QButtonGroup(self)
@@ -118,7 +118,7 @@ class AppSidebar(QFrame):
         footer_line.setStyleSheet("background-color: #2A3B56; max-height: 1px;")
         layout.addWidget(footer_line)
 
-        self.btn_toggle_collapse = QPushButton("  Thu gọn thanh điều hướng")
+        self.btn_toggle_collapse = QPushButton("  Thu gọn menu")
         self.btn_toggle_collapse.setObjectName("sidebarButton")
         self.btn_toggle_collapse.setIcon(get_icon("dashboard", "#A9B8CF", 16))
         self.btn_toggle_collapse.clicked.connect(self.toggle_collapse)
@@ -151,10 +151,10 @@ class AppSidebar(QFrame):
                 elif isinstance(w, QPushButton):
                     w.setText("")
         else:
-            self.setFixedWidth(236)
+            self.setFixedWidth(240)
             self.lbl_brand.setVisible(True)
             self.lbl_sub.setVisible(True)
-            self.btn_toggle_collapse.setText("  Thu gọn thanh điều hướng")
+            self.btn_toggle_collapse.setText("  Thu gọn menu")
             self.btn_toggle_collapse.setToolTip("")
 
             for i in range(self.nav_layout.count()):

@@ -40,8 +40,8 @@ class TopCommandBar(QFrame):
 
     def _init_ui(self) -> None:
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 10, 20, 10)
-        layout.setSpacing(14)
+        layout.setContentsMargins(20, 8, 20, 8)
+        layout.setSpacing(12)
 
         # 1. Tiêu đề màn hình
         self.lbl_title = QLabel("Tổng quan")
@@ -75,7 +75,7 @@ class TopCommandBar(QFrame):
         layout.addStretch()
 
         # 4. Nút Tạo bài mới (Primary Accent)
-        self.btn_quick_create = QPushButton("  + Tạo bài")
+        self.btn_quick_create = QPushButton("  Tạo bài")
         self.btn_quick_create.setObjectName("primaryButton")
         self.btn_quick_create.setIcon(get_icon("composer", "#FFFFFF", 16))
         self.btn_quick_create.setToolTip("Tạo bài viết hoặc Reels mới (Ctrl+N)")

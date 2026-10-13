@@ -54,6 +54,18 @@ QWidget {{
     selection-color: #FFFFFF;
 }}
 
+/* QLabel mặc định phải transparent — tránh hộp nền đen kế thừa từ QWidget trên Windows */
+QLabel {{
+    background-color: transparent;
+    border: none;
+}}
+
+/* QFrame mặc định không có nền (thay vì kế thừa) trừ khi có objectName */
+QFrame {{
+    background-color: transparent;
+    border: none;
+}}
+
 QMainWindow {{
     background-color: {c.bg_canvas};
 }}
@@ -99,6 +111,7 @@ QToolTip {{
     font-size: {t.size_body}px;
     border: none;
     margin: 2px 8px;
+    min-height: 34px;
 }}
 
 #sidebarButton:hover {{
@@ -308,7 +321,8 @@ QPushButton#ghostButton:hover {{
     background-color: {c.bg_surface};
     border: 1px solid {c.border_subtle};
     border-radius: {s.radius_lg}px;
-    padding: 16px 20px;
+    padding: 14px 18px;
+    min-height: 100px;
 }}
 
 #metricCard:hover {{
@@ -328,7 +342,7 @@ QTableWidget, QTableView {{
 QHeaderView::section {{
     background-color: {c.bg_canvas};
     color: {c.text_secondary};
-    padding: 8px 12px;
+    padding: 10px 14px;
     border: none;
     border-bottom: 1px solid {c.border_subtle};
     font-weight: {t.weight_semibold};
@@ -336,7 +350,7 @@ QHeaderView::section {{
 }}
 
 QTableWidget::item, QTableView::item {{
-    padding: 6px 10px;
+    padding: 8px 12px;
     min-height: {d.table_row_height}px;
 }}
 
@@ -496,7 +510,8 @@ QStatusBar {{
     border-top: 1px solid {c.border_subtle};
     color: {c.text_secondary};
     font-size: {t.size_small}px;
-    padding: 4px 12px;
+    padding: 4px 16px;
+    min-height: 28px;
 }}
 """
     return qss

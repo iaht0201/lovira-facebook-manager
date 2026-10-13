@@ -40,9 +40,10 @@ class DayTimelineCard(QFrame):
     def _init_ui(self) -> None:
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(3)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumHeight(88)
 
         # 1. Nhãn Ngày
         day_names = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
@@ -62,19 +63,15 @@ class DayTimelineCard(QFrame):
         self.lbl_date.setStyleSheet("font-size: 10px; color: #64748B;")
         layout.addWidget(self.lbl_date)
 
-        # 2. Số lượng bài
-        self.lbl_count = QLabel(str(self.count))
-        self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 2. Số lượng bài — gộp count + unit vào 1 row để tránh clipping
+        count_label_str = f"{self.count} bài"
         count_color = "#24C89A" if self.count > 0 else "#64748B"
+        self.lbl_count = QLabel(count_label_str)
+        self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_count.setStyleSheet(
-            f"font-size: 18px; font-weight: 700; color: {count_color}; margin: 2px 0;"
+            f"font-size: 15px; font-weight: 700; color: {count_color};"
         )
         layout.addWidget(self.lbl_count)
-
-        self.lbl_unit = QLabel("bài")
-        self.lbl_unit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_unit.setStyleSheet("font-size: 10px; color: #64748B;")
-        layout.addWidget(self.lbl_unit)
 
         self._update_style()
 
@@ -96,9 +93,9 @@ class DayTimelineCard(QFrame):
     def set_count(self, count: int) -> None:
         self.count = count
         count_color = "#24C89A" if self.count > 0 else "#64748B"
-        self.lbl_count.setText(str(count))
+        self.lbl_count.setText(f"{count} bài")
         self.lbl_count.setStyleSheet(
-            f"font-size: 18px; font-weight: 700; color: {count_color}; margin: 2px 0;"
+            f"font-size: 15px; font-weight: 700; color: {count_color};"
         )
 
     def mousePressEvent(self, event) -> None:

@@ -57,12 +57,12 @@ class MetricCard(QFrame):
     ):
         super().__init__(parent)
         self.target_route = target_route
-        self.setObjectName("cardFrame")
+        self.setObjectName("metricCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor if target_route else Qt.CursorShape.ArrowCursor)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(6)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(4)
 
         # 1. Hàng trên: Icon + Tiêu đề
         top_row = QHBoxLayout()
@@ -84,7 +84,7 @@ class MetricCard(QFrame):
 
         # 2. Giá trị số nổi bật
         self.lbl_val = QLabel(value)
-        self.lbl_val.setStyleSheet("font-size: 28px; font-weight: 800; color: #F8FAFC; margin-top: 4px;")
+        self.lbl_val.setStyleSheet("font-size: 28px; font-weight: 800; color: #F8FAFC;")
         layout.addWidget(self.lbl_val)
 
         # 3. Phụ đề mô tả
@@ -173,7 +173,7 @@ class OverviewWorkspaceView(QWidget):
         header_row.addWidget(btn_refresh)
 
         # Nút Soạn bài nổi bật
-        btn_compose = QPushButton(" + Soạn bài ngay")
+        btn_compose = QPushButton(" Soạn bài ngay")
         btn_compose.setObjectName("primaryButton")
         btn_compose.setIcon(get_icon("plus", "#FFFFFF", 16))
         btn_compose.clicked.connect(self.quick_post_requested.emit)
