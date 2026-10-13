@@ -218,3 +218,35 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   4. `Onboarding & EmptyState`: Tự động chuyển đổi giữa Bảng tác vụ và `EmptyState` (`no_pages` khi 0 fanpage, `no_schedules` khi chưa có bài viết).
   5. `StatusChip Integration`: Bảng các tác vụ gần đây gắn chip trạng thái nhiều màu sắc chuẩn WCAG AA và hiển thị giờ đăng Việt Nam chuẩn xác.
   6. `GlobalPageContext Filtering`: Khi người dùng chuyển đổi Fanpage trên TopBar, Dashboard lập tức lọc và cập nhật toàn bộ số liệu thẻ metric và bảng tác vụ theo Page đó.
+
+---
+
+### Task UX-06: Fanpage Workspace 2.0 (`pages_workspace.py`)
+
+- **Thời gian:** 13/10/2026 12:56 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** (đang chuẩn bị commit)
+- **Visual Snapshot:** `docs/redesign_screenshots/02_fanpage_v2.png` (90 KB, chuẩn thiết kế mockup `02_fanpage.png`).
+- **Command 1:** `pytest tests/test_ux06_pages_workspace.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux06_pages_workspace.py::test_pages_workspace_empty_state_and_table_switch PASSED [ 25%]
+  tests/test_ux06_pages_workspace.py::test_pages_workspace_search_filter PASSED [ 50%]
+  tests/test_ux06_pages_workspace.py::test_pages_workspace_verify_token_health PASSED [ 75%]
+  tests/test_ux06_pages_workspace.py::test_pages_workspace_unlink_page_warning PASSED [100%]
+  ============================== 4 passed in 1.49s ==============================
+  ```
+- **Command 2 (Full Gate):** `pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 104 items
+  ...
+  ============================= 104 passed in 9.57s =============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `ConnectPageDialog 2.0`: Tách 2 Tab trực quan rõ ràng; xác thực chặt chẽ token và quyền `CREATE_CONTENT` (khắc phục dứt điểm A-06).
+  2. `StatusChip`: Bảng Fanpage hiển thị rõ ràng 4 trạng thái (`ready`, `token_expired`, `unverified`, `insufficient_permissions`) kèm màu sắc đạt chuẩn WCAG AA và tooltip.
+  3. `Live Search Filter`: Ô tìm kiếm nhanh cho phép lọc tức thì danh sách Fanpage theo cả Tên gợi nhớ và Facebook Page ID.
+  4. `Verify Token Health`: Nút kiểm tra sức khỏe token trực tiếp cập nhật trạng thái động của Page vào SQLite và UI mà không cần kết nối lại.
+  5. `EmptyState Onboarding`: Tự động hiển thị thẻ EmptyState hướng dẫn kết nối khi chưa có Fanpage nào trong cơ sở dữ liệu.
+  6. `Guard AC-11 Unlink Page`: Đảm bảo không silent delete; hiển thị chi tiết số lượng lịch hẹn giờ trên máy và lịch trên Facebook.

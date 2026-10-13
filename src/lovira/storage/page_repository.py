@@ -106,6 +106,14 @@ class PageRepository:
             )
         return token_key
 
+    def update_page_status(self, page_id: str, status: str) -> None:
+        """Cập nhật trạng thái kết nối của Fanpage (ready, token_expired, unverified, insufficient_permissions)."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                "UPDATE pages SET status = ?, updated_at = datetime('now', 'utc') WHERE id = ?;",
+                (status, page_id),
+            )
+
     def get_page(self, page_id: str) -> Optional[Dict[str, Any]]:
         """Lấy thông tin chi tiết của một Fanpage theo ID."""
         with self.db.connection_scope() as conn:

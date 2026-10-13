@@ -15,8 +15,8 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 | **UX-03** | Desktop Shell & 10 Routes | P0 | UX-02 | **DONE** | 13/10/2026 |
 | **UX-04** | Shared UI Primitives | P1 | UX-03 | **DONE** | 13/10/2026 |
 | **UX-05** | Dashboard 2.0 | P1 | UX-04 | **DONE** | 13/10/2026 |
-| **UX-06** | Fanpage Workspace 2.0 | P0 | UX-04, UX-01 | IN PROGRESS | — |
-| **UX-07** | Unified Post Composer 2.0 | P0 | UX-06 | TODO | — |
+| **UX-06** | Fanpage Workspace 2.0 | P0 | UX-04, UX-01 | **DONE** | 13/10/2026 |
+| **UX-07** | Unified Post Composer 2.0 | P0 | UX-06 | IN PROGRESS | — |
 | **UX-08** | Schedule Workspace 2.0 | P0 | UX-07 | TODO | — |
 | **UX-09** | Media Library & Video Downloader 2.0 | P1 | UX-07 | TODO | — |
 | **UX-10** | Bulk Import Excel/CSV Wizard 2.0 | P0 | UX-06, UX-09 | TODO | — |
@@ -227,4 +227,40 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
   - Múi giờ bài đăng trên Timeline và Recent Jobs độc lập hoàn toàn với OS, luôn chạy theo `Asia/Ho_Chi_Minh`.
   - Alert Banner không để lộ token thô.
 - **Why DONE is justified:** Toàn bộ tiêu chí nghiệm thu của Dashboard 2.0 đã hoàn thành, có visual snapshot `01_dashboard_v2.png`, 100/100 tests passed.
-- **Next unblocked task:** UX-06 — Fanpage Workspace 2.0 (`pages_workspace.py`).
+
+---
+
+### UX-06 — Fanpage Workspace 2.0 (`pages_workspace.py`)
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 12:54 — 13/10/2026 12:57
+- **Baseline SHA / Commit SHA:** `6b61a9f` / (đang chuẩn bị commit)
+- **Scope and no-go changes:**
+  - Nâng cấp Fanpage Workspace thành phiên bản 2.0 theo mockup `02_fanpage.png`:
+    1. **ConnectPageDialog Wizard 2.0:** Chia 2 Tab trực quan: (1) Nhập trực tiếp Page ID & Page Token; (2) Quét tự động từ User Access Token.
+    2. **Kiểm toán an toàn Token (A-06):** Phân loại nghiêm ngặt `ready`, `unverified`, `insufficient_permissions`, `token_expired`. Tuyệt đối không gán `ready` khi inspect thất bại hoặc thiếu quyền `CREATE_CONTENT`.
+    3. **Bộ lọc tìm kiếm nhanh:** Lọc tức thì theo tên Fanpage và Facebook Page ID.
+    4. **Kiểm tra sức khỏe Token (Verify Token Health):** Nút hành động trực tiếp trên hàng để gọi inspect token và cập nhật trạng thái động trong SQLite (`ready` vs `token_expired`).
+    5. **Onboarding EmptyState:** Tự động chuyển đổi sang `EmptyState.no_pages` khi danh sách rỗng, có nút CTA mở Wizard kết nối.
+    6. **Bảo vệ an toàn khi gỡ Page (AC-11):** Cảnh báo chi tiết số lượng lịch hẹn giờ local và lịch remote trên Facebook.
+  - Mở rộng `PageRepository` với phương thức `update_page_status(page_id, status)`.
+- **Existing behavior to preserve:** Bảo toàn 100% các attribute cũ `table`, `btn_add_page`, `btn_refresh`, `btn_bulk_import`, `btn_unlink_page`, `page_list_changed`, `bulk_import_requested`, `reload_pages()`, `_get_selected_page_id()`, `_handle_unlink_page()`.
+- **Changed files:**
+  - `src/lovira/storage/page_repository.py` (added `update_page_status`)
+  - `src/lovira/ui/views/pages_workspace.py` (upgraded to 2.0)
+  - `tests/test_ux06_pages_workspace.py` (new - 4 test cases)
+  - `docs/redesign_screenshots/02_fanpage_v2.png` (captured visual snapshot)
+- **UI states implemented:**
+  - EmptyState no_pages khi 0 Fanpage.
+  - Bảng Fanpage hiển thị StatusChip (`ready`, `token_expired`, `unverified`, `insufficient_permissions`).
+  - Hộp thoại ConnectPageDialog 2 tab.
+  - Kết quả kiểm tra lại token (hợp lệ vs hết hạn).
+  - Hộp thoại xác nhận gỡ Fanpage kèm cảnh báo AC-11.
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux06_pages_workspace.py -v`: 4 passed in 1.49s.
+  - `pytest tests/ -v`: 104 passed in 9.57s (toàn bộ 104/104 tests xanh 100%).
+- **Security & a11y self-review:**
+  - Token được bảo vệ chặt chẽ trong SecretVault, chỉ lưu `token_ref` trong DB.
+  - Kiểm tra quyền `CREATE_CONTENT` trước khi cho phép đăng bài.
+  - Cảnh báo rõ ràng tránh mất mát lịch khi gỡ Fanpage.
+- **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Fanpage Workspace 2.0, khắc phục triệt để lỗi A-06, A-10, có visual snapshot `02_fanpage_v2.png`, 104/104 tests passed.
+- **Next unblocked task:** UX-07 — Unified Post Composer 2.0 (`post_composer.py`).
