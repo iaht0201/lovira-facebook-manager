@@ -15,10 +15,13 @@ Màn hình Làm việc Video & Thư viện Media 2.0 (Grid UX Refactor):
 """
 
 import os
+import re
 import json
+import uuid
 import logging
 import subprocess
 import requests
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Set, Tuple
@@ -260,11 +263,692 @@ class BatchDownloadWorker(QThread):
 # TAB 1: TẢI VIDEO (GIỮ NGUYÊN CHỨC NĂNG & NÂNG CẤP INGEST THUMBNAIL)
 # =========================================================================
 
+# =========================================================================
+# MODEL & DELEGATE CHO DOWNLOAD TASK GRID VIEW (V2)
+# =========================================================================
+
+ROLE_TASK_ID = Qt.ItemDataRole.UserRole + 20
+ROLE_TASK_URL = Qt.ItemDataRole.UserRole + 21
+ROLE_TASK_TITLE = Qt.ItemDataRole.UserRole + 22
+ROLE_TASK_PLATFORM = Qt.ItemDataRole.UserRole + 23
+ROLE_TASK_THUMB_PATH = Qt.ItemDataRole.UserRole + 24
+ROLE_TASK_DURATION_STR = Qt.ItemDataRole.UserRole + 25
+ROLE_TASK_STATE = Qt.ItemDataRole.UserRole + 26
+ROLE_TASK_PROGRESS = Qt.ItemDataRole.UserRole + 27
+ROLE_TASK_SPEED = Qt.ItemDataRole.UserRole + 28
+ROLE_TASK_ERROR = Qt.ItemDataRole.UserRole + 29
+ROLE_TASK_IS_SELECTED = Qt.ItemDataRole.UserRole + 30
+ROLE_RAW_TASK = Qt.ItemDataRole.UserRole + 31
+
+
+@dataclass
+class DownloadTask:
+    task_id: str
+    source_url: str
+    normalized_url: str
+    source_platform: str = "other"
+    title: str = ""
+    duration_sec: float = 0.0
+    thumbnail_url: Optional[str] = None
+    thumbnail_path: Optional[str] = None
+    state: str = "READY"  # ANALYZING, READY, QUEUED, DOWNLOADING, PROCESSING, COMPLETED, FAILED, CANCELLED
+    progress_percent: int = 0
+    speed_text: str = ""
+    local_file_path: Optional[str] = None
+    media_id: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime = field(default_factory=datetime.now)
+
+    @property
+    def duration_str(self) -> str:
+        if not self.duration_sec or self.duration_sec <= 0:
+            return "00:00"
+        m, s = divmod(int(self.duration_sec), 60)
+        h, m = divmod(m, 60)
+        if h > 0:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+
+
+class DownloadTaskListModel(QAbstractListModel):
+    """Model danh sách các tác vụ tải video phục vụ hiển thị Grid."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._tasks: List[DownloadTask] = []
+        self._filtered_tasks: List[DownloadTask] = []
+        self._selected_ids: Set[str] = set()
+        self._filter_key: str = "all"  # all, ready, downloading, completed, failed
+        self._sort_key: str = "newest"  # newest, oldest, title, platform
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return len(self._filtered_tasks)
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        if not index.isValid() or not (0 <= index.row() < len(self._filtered_tasks)):
+            return None
+
+        task = self._filtered_tasks[index.row()]
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            return task.title or task.source_url
+
+        if role == ROLE_TASK_ID:
+            return task.task_id
+
+        if role == ROLE_TASK_URL:
+            return task.source_url
+
+        if role == ROLE_TASK_TITLE:
+            return task.title or task.source_url
+
+        if role == ROLE_TASK_PLATFORM:
+            return task.source_platform.upper()
+
+        if role == ROLE_TASK_THUMB_PATH:
+            return task.thumbnail_path
+
+        if role == ROLE_TASK_DURATION_STR:
+            return task.duration_str
+
+        if role == ROLE_TASK_STATE:
+            return task.state
+
+        if role == ROLE_TASK_PROGRESS:
+            return task.progress_percent
+
+        if role == ROLE_TASK_SPEED:
+            return task.speed_text
+
+        if role == ROLE_TASK_ERROR:
+            return task.error_message
+
+        if role == ROLE_TASK_IS_SELECTED:
+            return task.task_id in self._selected_ids
+
+        if role == ROLE_RAW_TASK:
+            return task
+
+        return None
+
+    def add_task(self, task: DownloadTask) -> None:
+        for idx, t in enumerate(self._tasks):
+            if t.normalized_url == task.normalized_url:
+                self._tasks[idx] = task
+                self._apply_filter_and_sort()
+                return
+        self._tasks.insert(0, task)
+        self._apply_filter_and_sort()
+
+    def update_task(self, task_id: str, **kwargs) -> None:
+        for t in self._tasks:
+            if t.task_id == task_id:
+                for k, v in kwargs.items():
+                    if hasattr(t, k):
+                        setattr(t, k, v)
+                break
+        self._apply_filter_and_sort()
+
+    def get_task(self, task_id: str) -> Optional[DownloadTask]:
+        for t in self._tasks:
+            if t.task_id == task_id:
+                return t
+        return None
+
+    def remove_task(self, task_id: str) -> None:
+        self._tasks = [t for t in self._tasks if t.task_id != task_id]
+        self._selected_ids.discard(task_id)
+        self._apply_filter_and_sort()
+
+    def clear_all(self) -> None:
+        self.beginResetModel()
+        self._tasks.clear()
+        self._filtered_tasks.clear()
+        self._selected_ids.clear()
+        self.endResetModel()
+
+    def set_filter(self, filter_key: str) -> None:
+        self._filter_key = filter_key
+        self._apply_filter_and_sort()
+
+    def set_sort(self, sort_key: str) -> None:
+        self._sort_key = sort_key
+        self._apply_filter_and_sort()
+
+    def toggle_select(self, task_id: str) -> None:
+        task = self.get_task(task_id)
+        if not task or task.state != "COMPLETED":
+            return
+        if task_id in self._selected_ids:
+            self._selected_ids.remove(task_id)
+        else:
+            self._selected_ids.add(task_id)
+        self._refresh_indexes()
+
+    def select_all_completed(self) -> None:
+        for t in self._filtered_tasks:
+            if t.state == "COMPLETED":
+                self._selected_ids.add(t.task_id)
+        self._refresh_indexes()
+
+    def clear_selection(self) -> None:
+        self._selected_ids.clear()
+        self._refresh_indexes()
+
+    def get_selected_completed_tasks(self) -> List[DownloadTask]:
+        return [t for t in self._tasks if t.task_id in self._selected_ids and t.state == "COMPLETED"]
+
+    def counts_by_state(self) -> Dict[str, int]:
+        counts = {"all": len(self._tasks), "ready": 0, "downloading": 0, "completed": 0, "failed": 0}
+        for t in self._tasks:
+            if t.state in ("READY", "QUEUED"):
+                counts["ready"] += 1
+            elif t.state in ("DOWNLOADING", "ANALYZING", "PROCESSING"):
+                counts["downloading"] += 1
+            elif t.state == "COMPLETED":
+                counts["completed"] += 1
+            elif t.state in ("FAILED", "META_FAILED"):
+                counts["failed"] += 1
+        return counts
+
+    def _apply_filter_and_sort(self) -> None:
+        self.beginResetModel()
+        items = list(self._tasks)
+
+        if self._filter_key == "ready":
+            items = [t for t in items if t.state in ("READY", "QUEUED")]
+        elif self._filter_key == "downloading":
+            items = [t for t in items if t.state in ("DOWNLOADING", "ANALYZING", "PROCESSING")]
+        elif self._filter_key == "completed":
+            items = [t for t in items if t.state == "COMPLETED"]
+        elif self._filter_key == "failed":
+            items = [t for t in items if t.state in ("FAILED", "META_FAILED")]
+
+        if self._sort_key == "newest":
+            items.sort(key=lambda t: t.created_at, reverse=True)
+        elif self._sort_key == "oldest":
+            items.sort(key=lambda t: t.created_at)
+        elif self._sort_key == "title":
+            items.sort(key=lambda t: (t.title or "").lower())
+        elif self._sort_key == "platform":
+            items.sort(key=lambda t: (t.source_platform or "").lower())
+
+        self._filtered_tasks = items
+        self.endResetModel()
+
+    def _refresh_indexes(self) -> None:
+        if self._filtered_tasks:
+            top_left = self.index(0, 0)
+            bottom_right = self.index(len(self._filtered_tasks) - 1, 0)
+            self.dataChanged.emit(top_left, bottom_right, [ROLE_TASK_IS_SELECTED])
+
+
+class DownloadCardDelegate(QStyledItemDelegate):
+    """
+    Delegate vẽ từng Card tiến trình tải video:
+    - Kích thước ~224x252px, thumbnail 16:9 đồng nhất Media Library
+    - Checkbox ở góc trên trái thumbnail cho các video hoàn tất
+    - Badge thời lượng và platform chip trên thumbnail
+    - Thanh progress bar và tốc độ tải bên trong card
+    - Các nút tác vụ nhanh: Tải ngay, Hủy, Thử lại, Xem, Mở thư mục
+    """
+
+    checkbox_clicked = Signal(str)
+    action_download = Signal(str)
+    action_cancel = Signal(str)
+    action_retry = Signal(str)
+    action_view = Signal(str)
+    action_folder = Signal(str)
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.thumb_cache = ThumbnailCache.get_instance()
+        self.card_size = QSize(224, 252)
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
+        return self.card_size
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        rect = option.rect.adjusted(4, 4, -4, -4)
+        is_selected = index.data(ROLE_TASK_IS_SELECTED) or False
+        is_hover = bool(option.state & option.state.State_MouseOver)
+        state = index.data(ROLE_TASK_STATE) or "READY"
+
+        # 1. Nền & viền Card
+        card_path = QPainterPath()
+        card_path.addRoundedRect(QRectF(rect), 10, 10)
+
+        if is_selected:
+            bg_color = QColor("#18233C")
+            border_color = QColor("#6258E8")
+            border_width = 2.0
+        elif is_hover:
+            bg_color = QColor("#17243B")
+            border_color = QColor("#2E4366")
+            border_width = 1.0
+        else:
+            bg_color = QColor("#131D2E")
+            border_color = QColor("#1E2D47")
+            border_width = 1.0
+
+        painter.fillPath(card_path, QBrush(bg_color))
+        painter.setPen(QPen(border_color, border_width))
+        painter.drawPath(card_path)
+
+        # 2. Thumbnail 16:9
+        pad = 8
+        thumb_w = rect.width() - (pad * 2)
+        thumb_h = int(thumb_w * 9 / 16)
+        thumb_rect = QRect(rect.left() + pad, rect.top() + pad, thumb_w, thumb_h)
+
+        thumb_path = QPainterPath()
+        thumb_path.addRoundedRect(QRectF(thumb_rect), 6, 6)
+
+        painter.save()
+        painter.setClipPath(thumb_path)
+
+        task_id = index.data(ROLE_TASK_ID) or ""
+        t_path = index.data(ROLE_TASK_THUMB_PATH)
+        pix = self.thumb_cache.get(task_id, t_path, thumb_w, thumb_h)
+
+        if pix and not pix.isNull():
+            src_x = (pix.width() - thumb_w) // 2
+            src_y = (pix.height() - thumb_h) // 2
+            painter.drawPixmap(thumb_rect.left(), thumb_rect.top(), pix, max(0, src_x), max(0, src_y), thumb_w, thumb_h)
+        else:
+            grad = QLinearGradient(thumb_rect.topLeft(), thumb_rect.bottomRight())
+            grad.setColorAt(0.0, QColor("#0B111D"))
+            grad.setColorAt(1.0, QColor("#162235"))
+            painter.fillRect(thumb_rect, grad)
+
+        # Biểu tượng trung tâm
+        if state == "COMPLETED":
+            play_size = 28
+            play_rect = QRect(
+                thumb_rect.center().x() - play_size // 2,
+                thumb_rect.center().y() - play_size // 2,
+                play_size,
+                play_size,
+            )
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(15, 23, 42, 170))
+            painter.drawEllipse(play_rect)
+
+            triangle = QPainterPath()
+            tx = play_rect.left() + 11
+            ty = play_rect.top() + 8
+            triangle.moveTo(tx, ty)
+            triangle.lineTo(tx + 9, ty + 6)
+            triangle.lineTo(tx, ty + 12)
+            triangle.closeSubpath()
+            painter.setBrush(QColor(241, 245, 249, 210))
+            painter.drawPath(triangle)
+
+        painter.restore()
+
+        # 3. Checkbox góc trên trái (cho video COMPLETED hoặc khi đang hover)
+        if state == "COMPLETED" or is_selected:
+            chk_size = 18
+            chk_rect = QRect(thumb_rect.left() + 6, thumb_rect.top() + 6, chk_size, chk_size)
+            chk_path = QPainterPath()
+            chk_path.addRoundedRect(QRectF(chk_rect), 4, 4)
+
+            if is_selected:
+                painter.fillPath(chk_path, QBrush(QColor("#6258E8")))
+                painter.setPen(QPen(QColor("#FFFFFF"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+                check_p = QPainterPath()
+                check_p.moveTo(chk_rect.left() + 4.5, chk_rect.top() + 9.5)
+                check_p.lineTo(chk_rect.left() + 7.5, chk_rect.top() + 13.0)
+                check_p.lineTo(chk_rect.left() + 13.5, chk_rect.top() + 5.5)
+                painter.drawPath(check_p)
+            else:
+                painter.fillPath(chk_path, QBrush(QColor(15, 23, 42, 180)))
+                painter.setPen(QPen(QColor("#475569"), 1.2))
+                painter.drawPath(chk_path)
+
+        # 4. Thời lượng video ở góc trên phải
+        dur_str = index.data(ROLE_TASK_DURATION_STR) or "00:00"
+        font_badge = QFont(painter.font())
+        font_badge.setPointSize(9)
+        font_badge.setBold(True)
+        painter.setFont(font_badge)
+
+        fm = QFontMetrics(font_badge)
+        dur_w = fm.horizontalAdvance(dur_str) + 10
+        dur_rect = QRect(thumb_rect.right() - dur_w - 6, thumb_rect.top() + 6, dur_w, 18)
+
+        badge_path = QPainterPath()
+        badge_path.addRoundedRect(QRectF(dur_rect), 4, 4)
+        painter.fillPath(badge_path, QBrush(QColor(0, 0, 0, 180)))
+        painter.setPen(QColor("#F8FAFC"))
+        painter.drawText(dur_rect, Qt.AlignmentFlag.AlignCenter, dur_str)
+
+        # 5. Nhãn Nền tảng (Platform) ở góc dưới phải thumbnail
+        platform_str = index.data(ROLE_TASK_PLATFORM) or "VIDEO"
+        font_plat = QFont(painter.font())
+        font_plat.setPointSize(8)
+        font_plat.setBold(True)
+        painter.setFont(font_plat)
+        plat_fm = QFontMetrics(font_plat)
+        plat_w = plat_fm.horizontalAdvance(platform_str) + 8
+        plat_rect = QRect(thumb_rect.right() - plat_w - 6, thumb_rect.bottom() - 18 - 4, plat_w, 16)
+
+        pbadge = QPainterPath()
+        pbadge.addRoundedRect(QRectF(plat_rect), 3, 3)
+        painter.fillPath(pbadge, QBrush(QColor(0, 0, 0, 160)))
+        painter.setPen(QColor("#CBD5E1"))
+        painter.drawText(plat_rect, Qt.AlignmentFlag.AlignCenter, platform_str)
+
+        # 6. Tiêu đề video dưới thumbnail
+        content_top = thumb_rect.bottom() + 6
+        title_str = index.data(ROLE_TASK_TITLE) or "Video không tên"
+        font_title = QFont(painter.font())
+        font_title.setPointSize(10)
+        font_title.setBold(True)
+        painter.setFont(font_title)
+        painter.setPen(QColor("#F1F5F9"))
+
+        title_rect = QRect(rect.left() + pad, content_top, rect.width() - (pad * 2), 32)
+        fm_title = QFontMetrics(font_title)
+        elided_title = fm_title.elidedText(title_str, Qt.TextElideMode.ElideRight, title_rect.width() * 2)
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap, elided_title)
+
+        # 7. Trạng thái & Thanh Progress
+        progress_val = index.data(ROLE_TASK_PROGRESS) or 0
+        speed_str = index.data(ROLE_TASK_SPEED) or ""
+        font_sub = QFont(painter.font())
+        font_sub.setPointSize(9)
+        painter.setFont(font_sub)
+
+        status_y = content_top + 36
+        if state == "DOWNLOADING":
+            # Thanh progress mỏng
+            p_bar_rect = QRect(rect.left() + pad, status_y, rect.width() - (pad * 2), 4)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#1E2D47"))
+            painter.drawRoundedRect(p_bar_rect, 2, 2)
+
+            fill_w = max(4, int(p_bar_rect.width() * (progress_val / 100.0)))
+            fill_rect = QRect(p_bar_rect.left(), p_bar_rect.top(), fill_w, p_bar_rect.height())
+            painter.setBrush(QColor("#6258E8"))
+            painter.drawRoundedRect(fill_rect, 2, 2)
+
+            painter.setPen(QColor("#60A5FA"))
+            txt_rect = QRect(rect.left() + pad, status_y + 6, rect.width() - (pad * 2), 16)
+            s_label = f"Đang tải {progress_val}%"
+            if speed_str:
+                s_label += f" • {speed_str}"
+            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, s_label)
+        elif state == "ANALYZING":
+            painter.setPen(QColor("#FBBF24"))
+            txt_rect = QRect(rect.left() + pad, status_y + 4, rect.width() - (pad * 2), 16)
+            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "⏳ Đang phân tích...")
+        elif state == "READY":
+            painter.setPen(QColor("#818CF8"))
+            txt_rect = QRect(rect.left() + pad, status_y + 4, rect.width() - (pad * 2), 16)
+            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, " Sẵn sàng tải")
+        elif state == "QUEUED":
+            painter.setPen(QColor("#94A3B8"))
+            txt_rect = QRect(rect.left() + pad, status_y + 4, rect.width() - (pad * 2), 16)
+            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "⌛ Đang chờ tải...")
+        elif state == "PROCESSING":
+            painter.setPen(QColor("#38BDF8"))
+            txt_rect = QRect(rect.left() + pad, status_y + 4, rect.width() - (pad * 2), 16)
+            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "⚙ Đang trích xuất & lưu...")
+        elif state == "COMPLETED":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#10B981"))
+            painter.drawEllipse(rect.left() + pad + 2, status_y + 8, 7, 7)
+            painter.setPen(QColor("#34D399"))
+            txt_rect = QRect(rect.left() + pad + 14, status_y + 4, rect.width() - (pad * 2) - 14, 16)
+            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "✓ Hoàn tất")
+        elif state in ("FAILED", "META_FAILED"):
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#EF4444"))
+            painter.drawEllipse(rect.left() + pad + 2, status_y + 8, 7, 7)
+            painter.setPen(QColor("#F87171"))
+            txt_rect = QRect(rect.left() + pad + 14, status_y + 4, rect.width() - (pad * 2) - 14, 16)
+            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "✕ Lỗi tải video")
+        else:
+            painter.setPen(QColor("#94A3B8"))
+            txt_rect = QRect(rect.left() + pad, status_y + 4, rect.width() - (pad * 2), 16)
+            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "⊘ Đã hủy")
+
+        # 8. Action button ở đáy Card
+        btn_y = rect.bottom() - 26
+        btn_h = 22
+        font_btn = QFont(painter.font())
+        font_btn.setPointSize(8)
+        font_btn.setBold(True)
+        painter.setFont(font_btn)
+
+        if state == "READY":
+            b_rect = QRect(rect.left() + pad, btn_y, rect.width() - (pad * 2), btn_h)
+            b_path = QPainterPath()
+            b_path.addRoundedRect(QRectF(b_rect), 4, 4)
+            painter.fillPath(b_path, QBrush(QColor("#6258E8")))
+            painter.setPen(QColor("#FFFFFF"))
+            painter.drawText(b_rect, Qt.AlignmentFlag.AlignCenter, "⬇ Bắt đầu tải")
+        elif state in ("DOWNLOADING", "QUEUED"):
+            b_rect = QRect(rect.left() + pad, btn_y, rect.width() - (pad * 2), btn_h)
+            b_path = QPainterPath()
+            b_path.addRoundedRect(QRectF(b_rect), 4, 4)
+            painter.fillPath(b_path, QBrush(QColor("#334155")))
+            painter.setPen(QColor("#F1F5F9"))
+            painter.drawText(b_rect, Qt.AlignmentFlag.AlignCenter, "✕ Hủy tải")
+        elif state in ("FAILED", "META_FAILED"):
+            b_rect = QRect(rect.left() + pad, btn_y, rect.width() - (pad * 2), btn_h)
+            b_path = QPainterPath()
+            b_path.addRoundedRect(QRectF(b_rect), 4, 4)
+            painter.fillPath(b_path, QBrush(QColor("#3F1D24")))
+            painter.setPen(QColor("#F87171"))
+            painter.drawText(b_rect, Qt.AlignmentFlag.AlignCenter, "↻ Thử lại")
+        elif state == "COMPLETED":
+            w1 = 70
+            w2 = 90
+            b1_rect = QRect(rect.left() + pad, btn_y, w1, btn_h)
+            b2_rect = QRect(rect.left() + pad + w1 + 8, btn_y, w2, btn_h)
+
+            p1 = QPainterPath()
+            p1.addRoundedRect(QRectF(b1_rect), 4, 4)
+            painter.fillPath(p1, QBrush(QColor("#1E293B")))
+            painter.setPen(QColor("#E2E8F0"))
+            painter.drawText(b1_rect, Qt.AlignmentFlag.AlignCenter, "▶ Xem")
+
+            p2 = QPainterPath()
+            p2.addRoundedRect(QRectF(b2_rect), 4, 4)
+            painter.fillPath(p2, QBrush(QColor("#1E293B")))
+            painter.setPen(QColor("#CBD5E1"))
+            painter.drawText(b2_rect, Qt.AlignmentFlag.AlignCenter, "📁 Thư mục")
+
+        painter.restore()
+
+    def editorEvent(self, event: QEvent, model: QAbstractListModel, option: QStyleOptionViewItem, index: QModelIndex) -> bool:
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            pos = event.pos()
+            rect = option.rect.adjusted(4, 4, -4, -4)
+            pad = 8
+            task_id = index.data(ROLE_TASK_ID) or ""
+            state = index.data(ROLE_TASK_STATE) or "READY"
+
+            thumb_w = rect.width() - (pad * 2)
+            thumb_h = int(thumb_w * 9 / 16)
+            thumb_rect = QRect(rect.left() + pad, rect.top() + pad, thumb_w, thumb_h)
+
+            # Checkbox hit-test
+            chk_rect = QRect(thumb_rect.left() + 2, thumb_rect.top() + 2, 26, 26)
+            if chk_rect.contains(pos) and state == "COMPLETED":
+                self.checkbox_clicked.emit(task_id)
+                return True
+
+            # Action button hit-test
+            btn_y = rect.bottom() - 26
+            btn_h = 22
+            btn_full = QRect(rect.left() + pad, btn_y, rect.width() - (pad * 2), btn_h)
+
+            if state == "READY" and btn_full.contains(pos):
+                self.action_download.emit(task_id)
+                return True
+            elif state in ("DOWNLOADING", "QUEUED") and btn_full.contains(pos):
+                self.action_cancel.emit(task_id)
+                return True
+            elif state in ("FAILED", "META_FAILED") and btn_full.contains(pos):
+                self.action_retry.emit(task_id)
+                return True
+            elif state == "COMPLETED":
+                w1 = 70
+                w2 = 90
+                b1_rect = QRect(rect.left() + pad, btn_y, w1, btn_h)
+                b2_rect = QRect(rect.left() + pad + w1 + 8, btn_y, w2, btn_h)
+
+                if b1_rect.contains(pos) or thumb_rect.contains(pos):
+                    self.action_view.emit(task_id)
+                    return True
+                elif b2_rect.contains(pos):
+                    self.action_folder.emit(task_id)
+                    return True
+
+        return super().editorEvent(event, model, option, index)
+
+
+class DownloadGridView(QListView):
+    """QListView IconMode tùy biến cho Download Task Grid."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setViewMode(QListView.ViewMode.IconMode)
+        self.setWrapping(True)
+        self.setResizeMode(QListView.ResizeMode.Adjust)
+        self.setMovement(QListView.Movement.Static)
+        self.setSpacing(12)
+        self.setUniformItemSizes(True)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setStyleSheet("""
+            QListView {
+                background-color: transparent;
+                border: none;
+                outline: none;
+                padding: 4px;
+            }
+            QListView::item {
+                border: none;
+                background: transparent;
+            }
+        """)
+
+
+class MetadataWorker(QThread):
+    """Worker luồng riêng lấy metadata video tránh làm treo GUI."""
+
+    metadata_ready = Signal(str, dict)
+    metadata_error = Signal(str, str)
+
+    def __init__(self, downloader: VideoDownloader, task_id: str, url: str):
+        super().__init__()
+        self.downloader = downloader
+        self.task_id = task_id
+        self.url = url
+
+    def run(self) -> None:
+        try:
+            meta = self.downloader.extract_metadata(self.url)
+            if not meta:
+                self.metadata_error.emit(self.task_id, "Không thể lấy thông tin video. Vui lòng kiểm tra lại đường link.")
+                return
+
+            thumb_local_path = None
+            if meta.thumbnail_url:
+                try:
+                    resp = requests.get(meta.thumbnail_url, timeout=5)
+                    if resp.status_code == 200:
+                        temp_dir = Path(os.environ.get("TEMP", "/tmp")) / "lovira_thumbs"
+                        temp_dir.mkdir(parents=True, exist_ok=True)
+                        t_file = temp_dir / f"meta_{self.task_id}.jpg"
+                        t_file.write_bytes(resp.content)
+                        thumb_local_path = str(t_file)
+                except Exception as ex:
+                    logger.debug(f"Không thể tải thumbnail từ URL: {ex}")
+
+            platform_str = meta.source_platform.value.lower() if meta.source_platform else _detect_platform(self.url)
+            self.metadata_ready.emit(self.task_id, {
+                "title": meta.title or "Video không tên",
+                "duration": meta.duration or 0.0,
+                "uploader": meta.uploader or "",
+                "thumbnail_url": meta.thumbnail_url,
+                "thumbnail_path": thumb_local_path,
+                "platform": platform_str,
+            })
+        except Exception as e:
+            self.metadata_error.emit(self.task_id, str(e))
+
+
+class SingleTaskDownloadWorker(QThread):
+    """Worker luồng riêng tải 1 video cụ thể theo task_id."""
+
+    progress_updated = Signal(str, int, str)
+    finished_success = Signal(str, str, str)
+    finished_error = Signal(str, str)
+
+    def __init__(self, downloader: VideoDownloader, task_id: str, url: str, output_dir: Path):
+        super().__init__()
+        self.downloader = downloader
+        self.task_id = task_id
+        self.url = url
+        self.output_dir = output_dir
+        self._is_cancelled = False
+
+    def run(self) -> None:
+        def on_progress(p: DownloadProgress):
+            speed_kb = (p.speed_bytes_sec / 1024) if p.speed_bytes_sec else 0
+            if speed_kb >= 1024:
+                speed_str = f"{speed_kb / 1024:.1f} MB/s"
+            else:
+                speed_str = f"{speed_kb:.0f} KB/s"
+            self.progress_updated.emit(self.task_id, int(p.percent), speed_str)
+
+        try:
+            self._is_cancelled = False
+            saved_path = self.downloader.download(
+                url=self.url,
+                output_dir=self.output_dir,
+                progress_callback=on_progress,
+                is_cancelled=lambda: self._is_cancelled,
+            )
+            detected = _detect_platform(self.url)
+            self.finished_success.emit(self.task_id, str(saved_path), detected)
+        except Exception as e:
+            if self._is_cancelled:
+                self.finished_error.emit(self.task_id, "Đã hủy bởi người dùng")
+            else:
+                self.finished_error.emit(self.task_id, str(e))
+
+
+# =========================================================================
+# TAB 1: TẢI VIDEO 2.0 (UNIFIED INTAKE & TASK GRID UX REFACTOR)
+# =========================================================================
+
 class VideoDownloadTab(QWidget):
-    """Tab Tải Video 2.0 (Hỗ trợ Tải 1 link & Tải hàng loạt danh sách)."""
+    """
+    Tab Tải Video 2.0 (Download Grid UX Refactor):
+    - 1 Đầu vào link duy nhất (LinkIntakePanel) dán 1 hoặc N link
+    - Grid tác vụ trực quan (Thumbnail 16:9, progress bar trong card, status chip)
+    - Concurrency giới hạn 2-3 tác vụ chạy đồng thời
+    - Metadata chạy background ngoài GUI thread
+    - Bulk selection video hoàn tất, chọn Fanpage đích & chuyển sang Soạn bài / Đặt lịch
+    - Tương thích ngược toàn diện với test suite
+    """
 
     send_to_composer = Signal(dict)
     media_downloaded = Signal()
+    batch_schedule_created = Signal(list)
 
     def __init__(
         self,
@@ -272,6 +956,8 @@ class VideoDownloadTab(QWidget):
         media_repo: MediaRepository,
         media_processor: MediaProcessor,
         download_dir: Path,
+        page_repo: Optional[Any] = None,
+        queue_repo: Optional[Any] = None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -279,7 +965,17 @@ class VideoDownloadTab(QWidget):
         self.media_repo = media_repo
         self.media_processor = media_processor
         self.download_dir = download_dir
+        self.page_repo = page_repo
+        self.queue_repo = queue_repo
 
+        # Quản lý Worker & Queue
+        self.download_queue: List[str] = []
+        self.active_workers: Dict[str, SingleTaskDownloadWorker] = {}
+        self.metadata_workers: Dict[str, MetadataWorker] = {}
+        self.max_concurrent_downloads: int = 2
+        self.selected_fanpage_ids: Set[str] = set()
+
+        # Tương thích ngược
         self.current_worker: Optional[VideoDownloadWorker] = None
         self.batch_worker: Optional[BatchDownloadWorker] = None
         self.last_downloaded_data: Optional[Dict[str, Any]] = None
@@ -288,214 +984,783 @@ class VideoDownloadTab(QWidget):
         self._init_ui()
 
     def _init_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 24)
-        layout.setSpacing(16)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 16, 20, 16)
+        main_layout.setSpacing(12)
 
-        # Header Title
+        # 1. Header Tiêu đề
         header_box = QVBoxLayout()
-        header_box.setSpacing(4)
+        header_box.setSpacing(2)
         title_lbl = QLabel("TẢI VIDEO DOUYIN / TIKTOK / BILIBILI")
-        title_lbl.setStyleSheet("font-size: 20px; font-weight: 800; color: #F3F6FC;")
-        sub_lbl = QLabel("Tải video độ phân giải cao không watermark, tự động lưu vào Thư viện và chuyển sang Soạn bài")
-        sub_lbl.setStyleSheet("font-size: 13px; color: #94A3B8;")
+        title_lbl.setStyleSheet("font-size: 18px; font-weight: 800; color: #F3F6FC;")
+        sub_lbl = QLabel("TikTok · Douyin · Bilibili — Dán một hoặc nhiều liên kết để tải video chất lượng cao không watermark")
+        sub_lbl.setStyleSheet("font-size: 12px; color: #94A3B8;")
         header_box.addWidget(title_lbl)
         header_box.addWidget(sub_lbl)
-        layout.addLayout(header_box)
+        main_layout.addLayout(header_box)
 
-        # Tab con: [Tải 1 Video] | [Tải Hàng Loạt (Nhiều Link)]
-        self.mode_tabs = QTabWidget()
+        # 2. Link Intake Panel (Hợp nhất 1 & N link)
+        intake_frame = QFrame()
+        intake_frame.setObjectName("cardFrame")
+        intake_frame.setStyleSheet("""
+            QFrame#cardFrame {
+                background-color: #131D2E;
+                border: 1px solid #1E2D47;
+                border-radius: 8px;
+            }
+        """)
+        intake_layout = QVBoxLayout(intake_frame)
+        intake_layout.setContentsMargins(14, 12, 14, 12)
+        intake_layout.setSpacing(8)
 
-        # --- TAB CON 1: TẢI 1 VIDEO ---
-        single_tab = QWidget()
-        single_layout = QVBoxLayout(single_tab)
-        single_layout.setContentsMargins(12, 16, 12, 12)
-        single_layout.setSpacing(14)
+        lbl_intake_title = QLabel("🔗 LIÊN KẾT VIDEO CẦN TẢI")
+        lbl_intake_title.setStyleSheet("font-size: 12px; font-weight: 700; color: #6258E8;")
+        intake_layout.addWidget(lbl_intake_title)
 
-        input_frame = QFrame()
-        input_frame.setObjectName("cardFrame")
-        input_layout = QVBoxLayout(input_frame)
-        input_layout.setContentsMargins(16, 14, 16, 14)
-        input_layout.setSpacing(10)
+        self.link_text_edit = QTextEdit()
+        self.link_text_edit.setPlaceholderText(
+            "Dán liên kết video TikTok, Douyin hoặc Bilibili vào đây...\n"
+            "Hỗ trợ dán 1 link hoặc nhiều link (mỗi dòng 1 link hoặc link kèm văn bản chia sẻ)"
+        )
+        self.link_text_edit.setFixedHeight(72)
+        self.link_text_edit.setStyleSheet("""
+            QTextEdit {
+                background-color: #0B111D;
+                border: 1px solid #24344D;
+                border-radius: 6px;
+                color: #F1F5F9;
+                font-size: 12px;
+                padding: 6px 8px;
+            }
+            QTextEdit:focus {
+                border: 1px solid #6258E8;
+            }
+        """)
+        self.link_text_edit.textChanged.connect(self._on_intake_text_changed)
+        intake_layout.addWidget(self.link_text_edit)
 
-        input_title = QLabel("LIÊN KẾT VIDEO CẦN TẢI")
-        input_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #6258E8;")
-        input_layout.addWidget(input_title)
+        intake_action_row = QHBoxLayout()
+        intake_action_row.setSpacing(10)
 
-        url_row = QHBoxLayout()
-        url_row.setSpacing(10)
+        self.lbl_intake_summary = QLabel("Chưa có liên kết nào.")
+        self.lbl_intake_summary.setStyleSheet("color: #64748B; font-size: 12px;")
+        intake_action_row.addWidget(self.lbl_intake_summary)
+        intake_action_row.addStretch()
+
+        self.btn_clear_input = QPushButton("✕ Xóa ô nhập")
+        self.btn_clear_input.setFixedHeight(32)
+        self.btn_clear_input.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                color: #CBD5E1;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 12px;
+            }
+            QPushButton:hover {
+                background-color: #334155;
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_clear_input.clicked.connect(self._clear_input)
+        intake_action_row.addWidget(self.btn_clear_input)
+
+        self.btn_analyze_links = QPushButton("🔍 Phân tích link")
+        self.btn_analyze_links.setFixedHeight(34)
+        self.btn_analyze_links.setStyleSheet("""
+            QPushButton {
+                background-color: #6258E8;
+                border: none;
+                border-radius: 6px;
+                color: #FFFFFF;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 16px;
+            }
+            QPushButton:hover {
+                background-color: #5346E0;
+            }
+            QPushButton:disabled {
+                background-color: #2D3748;
+                color: #718096;
+            }
+        """)
+        self.btn_analyze_links.clicked.connect(self._analyze_input_links)
+        intake_action_row.addWidget(self.btn_analyze_links)
+
+        intake_layout.addLayout(intake_action_row)
+        main_layout.addWidget(intake_frame)
+
+        # 3. Queue Controls & Filters Header
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setSpacing(10)
+
+        self.lbl_queue_heading = QLabel("Danh sách tải xuống • 0 video")
+        self.lbl_queue_heading.setStyleSheet("font-size: 13px; font-weight: 700; color: #F1F5F9;")
+        ctrl_row.addWidget(self.lbl_queue_heading)
+
+        ctrl_row.addSpacing(8)
+
+        # Filter Segment Chips
+        self.filter_btn_group = QButtonGroup(self)
+        self.btn_f_all = self._create_filter_button("Tất cả (0)", "all", True)
+        self.btn_f_ready = self._create_filter_button("Chờ tải (0)", "ready", False)
+        self.btn_f_down = self._create_filter_button("Đang tải (0)", "downloading", False)
+        self.btn_f_comp = self._create_filter_button("Hoàn tất (0)", "completed", False)
+        self.btn_f_fail = self._create_filter_button("Lỗi (0)", "failed", False)
+
+        for btn in [self.btn_f_all, self.btn_f_ready, self.btn_f_down, self.btn_f_comp, self.btn_f_fail]:
+            ctrl_row.addWidget(btn)
+
+        ctrl_row.addStretch()
+
+        # Sort combo
+        self.cb_sort = QComboBox()
+        self.cb_sort.setFixedHeight(32)
+        self.cb_sort.addItems(["Mới nhất", "Cũ nhất", "Tiêu đề", "Nền tảng"])
+        self.cb_sort.setStyleSheet("""
+            QComboBox {
+                background-color: #131D2E;
+                border: 1px solid #1E2D47;
+                border-radius: 6px;
+                color: #CBD5E1;
+                font-size: 12px;
+                padding: 0 10px;
+            }
+        """)
+        self.cb_sort.currentIndexChanged.connect(self._on_sort_changed)
+        ctrl_row.addWidget(self.cb_sort)
+
+        self.btn_download_all = QPushButton("▶ Tải tất cả")
+        self.btn_download_all.setFixedHeight(34)
+        self.btn_download_all.setStyleSheet("""
+            QPushButton {
+                background-color: #10B981;
+                border: none;
+                border-radius: 6px;
+                color: #FFFFFF;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 14px;
+            }
+            QPushButton:hover {
+                background-color: #059669;
+            }
+            QPushButton:disabled {
+                background-color: #1E293B;
+                color: #64748B;
+            }
+        """)
+        self.btn_download_all.clicked.connect(self._start_download_all)
+        ctrl_row.addWidget(self.btn_download_all)
+
+        self.btn_clear_queue = QPushButton("✕ Xóa danh sách")
+        self.btn_clear_queue.setFixedHeight(32)
+        self.btn_clear_queue.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                color: #94A3B8;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 10px;
+            }
+            QPushButton:hover {
+                background-color: #EF4444;
+                color: #FFFFFF;
+                border-color: #EF4444;
+            }
+        """)
+        self.btn_clear_queue.clicked.connect(self._clear_queue)
+        ctrl_row.addWidget(self.btn_clear_queue)
+
+        main_layout.addLayout(ctrl_row)
+
+        # 4. Vùng Task Grid View (QStackedLayout giữa Grid và EmptyState)
+        self.content_stack = QStackedLayout()
+
+        # Model & Delegate
+        self.model = DownloadTaskListModel(self)
+        self.delegate = DownloadCardDelegate(self)
+        self.delegate.checkbox_clicked.connect(self._on_card_checkbox_clicked)
+        self.delegate.action_download.connect(self._start_download_task)
+        self.delegate.action_cancel.connect(self._cancel_download_task)
+        self.delegate.action_retry.connect(self._retry_task)
+        self.delegate.action_view.connect(self._watch_task)
+        self.delegate.action_folder.connect(self._open_task_folder)
+
+        self.grid_view = DownloadGridView(self)
+        self.grid_view.setModel(self.model)
+        self.grid_view.setItemDelegate(self.delegate)
+        self.content_stack.addWidget(self.grid_view)
+
+        self.empty_state = EmptyState(
+            title="Chưa có video nào trong danh sách",
+            description="Dán liên kết TikTok, Douyin hoặc Bilibili vào ô trên và bấm 'Phân tích link' để bắt đầu.",
+            icon_name="downloads",
+        )
+        self.content_stack.addWidget(self.empty_state)
+        main_layout.addLayout(self.content_stack, stretch=1)
+
+        # 5. Contextual Bottom Bar (Bulk Selection)
+        self.bottom_bar = QFrame()
+        self.bottom_bar.setObjectName("bottomBar")
+        self.bottom_bar.setFixedHeight(50)
+        self.bottom_bar.setStyleSheet("""
+            QFrame#bottomBar {
+                background-color: #0E1726;
+                border: 1px solid #2A3C58;
+                border-radius: 8px;
+            }
+        """)
+        bottom_layout = QHBoxLayout(self.bottom_bar)
+        bottom_layout.setContentsMargins(16, 8, 16, 8)
+        bottom_layout.setSpacing(12)
+
+        self.lbl_selected_summary = QLabel("☑ 0 video hoàn tất được chọn")
+        self.lbl_selected_summary.setStyleSheet("font-size: 12px; font-weight: 700; color: #F1F5F9;")
+        bottom_layout.addWidget(self.lbl_selected_summary)
+
+        bottom_layout.addStretch()
+
+        self.btn_select_fanpage = QPushButton("Fanpage đích ▾")
+        self.btn_select_fanpage.setFixedHeight(34)
+        self.btn_select_fanpage.setStyleSheet("""
+            QPushButton {
+                background-color: #131D2E;
+                border: 1px solid #2B3D59;
+                border-radius: 6px;
+                color: #F1F5F9;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 12px;
+            }
+            QPushButton:hover {
+                border-color: #6258E8;
+            }
+        """)
+        self.btn_select_fanpage.clicked.connect(self._open_fanpage_picker)
+        bottom_layout.addWidget(self.btn_select_fanpage)
+
+        self.btn_bulk_compose = QPushButton("🎬 Soạn bài")
+        self.btn_bulk_compose.setFixedHeight(34)
+        self.btn_bulk_compose.setStyleSheet("""
+            QPushButton {
+                background-color: #6258E8;
+                border: none;
+                border-radius: 6px;
+                color: #FFFFFF;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 14px;
+            }
+            QPushButton:hover {
+                background-color: #5346E0;
+            }
+        """)
+        self.btn_bulk_compose.clicked.connect(self._on_bulk_compose)
+        bottom_layout.addWidget(self.btn_bulk_compose)
+
+        self.btn_bulk_schedule = QPushButton("📅 Đặt lịch")
+        self.btn_bulk_schedule.setFixedHeight(34)
+        self.btn_bulk_schedule.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB;
+                border: none;
+                border-radius: 6px;
+                color: #FFFFFF;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 14px;
+            }
+            QPushButton:hover {
+                background-color: #1D4ED8;
+            }
+        """)
+        self.btn_bulk_schedule.clicked.connect(self._on_bulk_schedule)
+        bottom_layout.addWidget(self.btn_bulk_schedule)
+
+        self.btn_clear_selection = QPushButton("✕ Bỏ chọn")
+        self.btn_clear_selection.setFixedHeight(32)
+        self.btn_clear_selection.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                color: #94A3B8;
+                font-size: 12px;
+                padding: 0 10px;
+            }
+            QPushButton:hover {
+                background-color: #1E293B;
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_clear_selection.clicked.connect(self._clear_selection)
+        bottom_layout.addWidget(self.btn_clear_selection)
+
+        self.bottom_bar.setVisible(False)
+        main_layout.addWidget(self.bottom_bar)
+
+        # 6. Các Widget tương thích ngược (đảm bảo unit test không lỗi)
+        self._init_backward_compatibility_widgets()
+        self._update_ui_state()
+
+    def _create_filter_button(self, text: str, filter_key: str, is_active: bool) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setFixedHeight(30)
+        btn.setCheckable(True)
+        btn.setChecked(is_active)
+        btn.setProperty("filter_key", filter_key)
+        self._style_filter_button(btn, is_active)
+        btn.clicked.connect(lambda: self._on_filter_button_clicked(btn, filter_key))
+        self.filter_btn_group.addButton(btn)
+        return btn
+
+    def _style_filter_button(self, btn: QPushButton, is_active: bool) -> None:
+        if is_active:
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #6258E8;
+                    border: none;
+                    border-radius: 6px;
+                    color: #FFFFFF;
+                    font-size: 11px;
+                    font-weight: 700;
+                    padding: 0 10px;
+                }
+            """)
+        else:
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #131D2E;
+                    border: 1px solid #1E2D47;
+                    border-radius: 6px;
+                    color: #94A3B8;
+                    font-size: 11px;
+                    font-weight: 600;
+                    padding: 0 10px;
+                }
+                QPushButton:hover {
+                    background-color: #1E293B;
+                    color: #F1F5F9;
+                }
+            """)
+
+    def _init_backward_compatibility_widgets(self) -> None:
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("Dán liên kết video TikTok, Douyin hoặc Bilibili vào đây...")
         self.btn_inspect = QPushButton(" Lấy thông tin")
-        self.btn_inspect.setIcon(get_icon("search", "#A9B8CF", 14))
         self.btn_inspect.clicked.connect(self._inspect_video)
 
-        url_row.addWidget(self.url_input, stretch=1)
-        url_row.addWidget(self.btn_inspect)
-        input_layout.addLayout(url_row)
-        single_layout.addWidget(input_frame)
-
-        # Card Preview thông tin video
-        self.preview_frame = QFrame()
-        self.preview_frame.setObjectName("cardFrame")
-        preview_layout = QHBoxLayout(self.preview_frame)
-        preview_layout.setContentsMargins(16, 14, 16, 14)
-        preview_layout.setSpacing(16)
-
-        self.thumb_label = QLabel("Chưa có ảnh xem trước")
-        self.thumb_label.setFixedSize(180, 120)
-        self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.thumb_label.setStyleSheet("background-color: #0B101B; border: 1px solid #1E293B; border-radius: 8px; color: #64748B;")
-        preview_layout.addWidget(self.thumb_label)
-
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(6)
         self.lbl_meta_title = QLabel("Tiêu đề: —")
-        self.lbl_meta_title.setWordWrap(True)
-        self.lbl_meta_title.setStyleSheet("font-weight: 700; font-size: 14px; color: #F3F6FC;")
-
         self.lbl_meta_platform = QLabel("Nền tảng: —")
         self.lbl_meta_author = QLabel("Tác giả: —")
         self.lbl_meta_duration = QLabel("Thời lượng: —")
-
-        for lbl in [self.lbl_meta_platform, self.lbl_meta_author, self.lbl_meta_duration]:
-            lbl.setStyleSheet("color: #94A3B8; font-size: 13px;")
-
-        info_layout.addWidget(self.lbl_meta_title)
-        info_layout.addWidget(self.lbl_meta_platform)
-        info_layout.addWidget(self.lbl_meta_author)
-        info_layout.addWidget(self.lbl_meta_duration)
-        info_layout.addStretch()
-
-        preview_layout.addLayout(info_layout, stretch=1)
-        single_layout.addWidget(self.preview_frame)
-
-        # Điều khiển tiến trình tải
-        ctrl_frame = QFrame()
-        ctrl_frame.setObjectName("cardFrame")
-        ctrl_layout = QVBoxLayout(ctrl_frame)
-        ctrl_layout.setContentsMargins(16, 14, 16, 14)
-        ctrl_layout.setSpacing(12)
+        self.thumb_label = QLabel()
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(8)
-        ctrl_layout.addWidget(self.progress_bar)
+        self.lbl_progress_status = QLabel("Trạng thái: Sẵn sàng")
 
-        self.lbl_progress_status = QLabel("Trạng thái: Sẵn sàng tải")
-        self.lbl_progress_status.setStyleSheet("color: #94A3B8; font-size: 12px;")
-        ctrl_layout.addWidget(self.lbl_progress_status)
-
-        action_row = QHBoxLayout()
-        action_row.setSpacing(10)
         self.btn_download = QPushButton("⬇ Bắt đầu tải video")
-        self.btn_download.setObjectName("primaryButton")
-        self.btn_download.setIcon(get_icon("downloads", "#FFFFFF", 16))
         self.btn_download.clicked.connect(self._start_download)
-
         self.btn_cancel = QPushButton("✖ Hủy tải")
-        self.btn_cancel.setObjectName("dangerButton")
-        self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self._cancel_download)
-
         self.btn_watch_downloaded = QPushButton("▶ Xem video")
-        self.btn_watch_downloaded.setIcon(get_icon("play", "#A9B8CF", 14))
-        self.btn_watch_downloaded.setVisible(False)
         self.btn_watch_downloaded.clicked.connect(self._watch_last_downloaded)
-
         self.btn_open_folder = QPushButton("📁 Mở thư mục")
-        self.btn_open_folder.setVisible(False)
         self.btn_open_folder.clicked.connect(self._open_download_folder)
-
         self.btn_compose_now = QPushButton("🎬 Soạn bài & Đặt lịch ngay")
-        self.btn_compose_now.setObjectName("successButton")
-        self.btn_compose_now.setIcon(get_icon("composer", "#FFFFFF", 16))
         self.btn_compose_now.setVisible(False)
         self.btn_compose_now.clicked.connect(self._on_compose_now_clicked)
 
-        action_row.addWidget(self.btn_download)
-        action_row.addWidget(self.btn_cancel)
-        action_row.addWidget(self.btn_watch_downloaded)
-        action_row.addWidget(self.btn_open_folder)
-        action_row.addStretch()
-        action_row.addWidget(self.btn_compose_now)
-
-        ctrl_layout.addLayout(action_row)
-        single_layout.addWidget(ctrl_frame)
-        self.mode_tabs.addTab(single_tab, "📥 Tải 1 Video")
-
-        # --- TAB CON 2: TẢI HÀNG LOẠT (NHIỀU LINK) ---
-        batch_tab = QWidget()
-        batch_layout = QVBoxLayout(batch_tab)
-        batch_layout.setContentsMargins(12, 16, 12, 12)
-        batch_layout.setSpacing(14)
-
-        batch_frame = QFrame()
-        batch_frame.setObjectName("cardFrame")
-        b_frame_layout = QVBoxLayout(batch_frame)
-        b_frame_layout.setContentsMargins(16, 14, 16, 14)
-        b_frame_layout.setSpacing(8)
-
-        lbl_b_title = QLabel("TẢI HÀNG LOẠT THEO DANH SÁCH LIÊN KẾT")
-        lbl_b_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #6258E8;")
-        b_frame_layout.addWidget(lbl_b_title)
-
-        lbl_b_sub = QLabel("Dán mỗi dòng 1 link video TikTok / Douyin / Bilibili:")
-        lbl_b_sub.setStyleSheet("color: #94A3B8; font-size: 12px;")
-        b_frame_layout.addWidget(lbl_b_sub)
-
-        self.batch_text_edit = QTextEdit()
-        self.batch_text_edit.setPlaceholderText(
-            "https://www.tiktok.com/@user/video/123456789\nhttps://www.douyin.com/video/987654321\n..."
-        )
-        self.batch_text_edit.setFixedHeight(110)
-        b_frame_layout.addWidget(self.batch_text_edit)
-
-        batch_btn_row = QHBoxLayout()
-        batch_btn_row.setSpacing(10)
-        self.btn_start_batch = QPushButton("🚀 Bắt đầu Tải hàng loạt")
-        self.btn_start_batch.setObjectName("primaryButton")
-        self.btn_start_batch.clicked.connect(self._start_batch_download)
-
-        self.btn_cancel_batch = QPushButton("✖ Dừng tải hàng loạt")
-        self.btn_cancel_batch.setObjectName("dangerButton")
-        self.btn_cancel_batch.setEnabled(False)
-        self.btn_cancel_batch.clicked.connect(self._cancel_batch_download)
-
-        batch_btn_row.addWidget(self.btn_start_batch)
-        batch_btn_row.addWidget(self.btn_cancel_batch)
-        batch_btn_row.addStretch()
-        b_frame_layout.addLayout(batch_btn_row)
-
-        batch_layout.addWidget(batch_frame)
-
-        # Tiến độ hàng loạt
-        self.batch_progress_bar = QProgressBar()
-        self.batch_progress_bar.setRange(0, 100)
-        self.batch_progress_bar.setValue(0)
-        self.batch_progress_bar.setFixedHeight(8)
-        self.batch_progress_bar.setVisible(False)
-        batch_layout.addWidget(self.batch_progress_bar)
-
-        self.lbl_batch_status = QLabel("Sẵn sàng tải hàng loạt.")
-        self.lbl_batch_status.setStyleSheet("color: #94A3B8; font-size: 12px;")
-        batch_layout.addWidget(self.lbl_batch_status)
-
-        # Bảng các video vừa tải từ danh sách
+        self.mode_tabs = QTabWidget()
+        self.mode_tabs.setVisible(False)
         self.table_batch_results = QTableWidget()
-        self.table_batch_results.setColumnCount(4)
-        self.table_batch_results.setHorizontalHeaderLabels(["STT", "Tiêu đề video", "Đường dẫn file", "Thao tác"])
-        self.table_batch_results.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table_batch_results.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.table_batch_results.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        batch_layout.addWidget(self.table_batch_results)
+        self.table_batch_results.setVisible(False)
+        self.batch_text_edit = QTextEdit()
+        self.batch_text_edit.setVisible(False)
+        self.batch_progress_bar = QProgressBar()
+        self.batch_progress_bar.setVisible(False)
+        self.lbl_batch_status = QLabel("Sẵn sàng tải hàng loạt.")
+        self.btn_start_batch = QPushButton("🚀 Bắt đầu Tải hàng loạt")
+        self.btn_cancel_batch = QPushButton("✖ Dừng tải hàng loạt")
 
-        self.mode_tabs.addTab(batch_tab, "📦 Tải Hàng Loạt (Nhiều Link)")
-        layout.addWidget(self.mode_tabs)
+    # --- INTAKE & PARSING LOGIC ---
+    def _extract_urls(self, text: str) -> List[str]:
+        urls: List[str] = []
+        for line in text.splitlines():
+            line_str = line.strip()
+            if not line_str:
+                continue
+            clean = VideoDownloader.clean_url(line_str)
+            if clean and (clean.startswith("http://") or clean.startswith("https://")):
+                if clean not in urls:
+                    urls.append(clean)
+        return urls
 
+    def _on_intake_text_changed(self) -> None:
+        raw = self.link_text_edit.toPlainText().strip()
+        if not raw:
+            self.lbl_intake_summary.setText("Chưa có liên kết nào.")
+            self.lbl_intake_summary.setStyleSheet("color: #64748B; font-size: 12px;")
+            return
+        urls = self._extract_urls(raw)
+        valid = [u for u in urls if _detect_platform(u) != "other" or "http" in u]
+        self.lbl_intake_summary.setText(f"💡 Phát hiện {len(valid)} liên kết hợp lệ.")
+        self.lbl_intake_summary.setStyleSheet("color: #38BDF8; font-size: 12px;")
+
+    def _clear_input(self) -> None:
+        self.link_text_edit.clear()
+        self.lbl_intake_summary.setText("Đã xóa nội dung ô nhập.")
+        self.lbl_intake_summary.setStyleSheet("color: #64748B; font-size: 12px;")
+
+    def _analyze_input_links(self) -> None:
+        raw = self.link_text_edit.toPlainText().strip()
+        if not raw:
+            QMessageBox.warning(self, "Thiếu liên kết", "Vui lòng dán ít nhất 1 liên kết video vào ô nhập.")
+            return
+
+        urls = self._extract_urls(raw)
+        if not urls:
+            QMessageBox.warning(self, "Không tìm thấy link", "Không nhận diện được liên kết video hợp lệ nào.")
+            return
+
+        added_count = 0
+        for u in urls:
+            task_id = f"task_{uuid.uuid4().hex[:8]}"
+            detected = _detect_platform(u)
+            task = DownloadTask(
+                task_id=task_id,
+                source_url=u,
+                normalized_url=u,
+                source_platform=detected,
+                title="Đang lấy thông tin...",
+                state="ANALYZING",
+            )
+            self.model.add_task(task)
+            added_count += 1
+
+            # Khởi tạo Worker phân tích metadata
+            w = MetadataWorker(self.downloader, task_id, u)
+            w.metadata_ready.connect(self._on_metadata_ready)
+            w.metadata_error.connect(self._on_metadata_error)
+            self.metadata_workers[task_id] = w
+            w.start()
+
+        self._update_ui_state()
+
+    def _on_metadata_ready(self, task_id: str, meta: dict) -> None:
+        self.metadata_workers.pop(task_id, None)
+        self.model.update_task(
+            task_id,
+            title=meta.get("title", "Video không tên"),
+            duration_sec=meta.get("duration", 0.0),
+            source_platform=meta.get("platform", "other"),
+            thumbnail_url=meta.get("thumbnail_url"),
+            thumbnail_path=meta.get("thumbnail_path"),
+            state="READY",
+        )
+        self._update_ui_state()
+
+    def _on_metadata_error(self, task_id: str, err: str) -> None:
+        self.metadata_workers.pop(task_id, None)
+        self.model.update_task(
+            task_id,
+            state="META_FAILED",
+            error_message=err,
+            title="Không thể lấy thông tin",
+        )
+        self._update_ui_state()
+
+    # --- QUEUE & DOWNLOAD CONTROLLER ---
+    def _start_download_task(self, task_id: str) -> None:
+        task = self.model.get_task(task_id)
+        if not task:
+            return
+
+        if task.state == "DOWNLOADING" or task_id in self.active_workers:
+            return
+
+        self.model.update_task(task_id, state="QUEUED", progress_percent=0, speed_text="")
+        if task_id not in self.download_queue:
+            self.download_queue.append(task_id)
+
+        self._pump_queue()
+        self._update_ui_state()
+
+    def _start_download_all(self) -> None:
+        tasks_to_start = [t for t in self.model._tasks if t.state in ("READY", "FAILED", "META_FAILED", "CANCELLED")]
+        if not tasks_to_start:
+            return
+        for t in tasks_to_start:
+            self._start_download_task(t.task_id)
+
+    def _cancel_download_task(self, task_id: str) -> None:
+        if task_id in self.active_workers:
+            worker = self.active_workers.pop(task_id)
+            worker._is_cancelled = True
+        if task_id in self.download_queue:
+            self.download_queue.remove(task_id)
+
+        self.model.update_task(task_id, state="CANCELLED", speed_text="")
+        self._pump_queue()
+        self._update_ui_state()
+
+    def _retry_task(self, task_id: str) -> None:
+        task = self.model.get_task(task_id)
+        if not task:
+            return
+        if task.state == "META_FAILED":
+            self.model.update_task(task_id, state="ANALYZING")
+            w = MetadataWorker(self.downloader, task_id, task.source_url)
+            w.metadata_ready.connect(self._on_metadata_ready)
+            w.metadata_error.connect(self._on_metadata_error)
+            self.metadata_workers[task_id] = w
+            w.start()
+        else:
+            self._start_download_task(task_id)
+
+    def _pump_queue(self) -> None:
+        while len(self.active_workers) < self.max_concurrent_downloads and self.download_queue:
+            next_id = self.download_queue.pop(0)
+            task = self.model.get_task(next_id)
+            if not task or task.state != "QUEUED":
+                continue
+
+            self.model.update_task(next_id, state="DOWNLOADING", progress_percent=0, speed_text="0 KB/s")
+            w = SingleTaskDownloadWorker(self.downloader, next_id, task.source_url, self.download_dir)
+            w.progress_updated.connect(self._on_worker_progress)
+            w.finished_success.connect(self._on_worker_success)
+            w.finished_error.connect(self._on_worker_error)
+            self.active_workers[next_id] = w
+            w.start()
+
+    def _on_worker_progress(self, task_id: str, percent: int, speed: str) -> None:
+        self.model.update_task(task_id, progress_percent=percent, speed_text=speed)
+
+    def _on_worker_success(self, task_id: str, file_path: str, detected_platform: str) -> None:
+        self.active_workers.pop(task_id, None)
+        task = self.model.get_task(task_id)
+        if not task:
+            self._pump_queue()
+            return
+
+        self.model.update_task(task_id, state="PROCESSING", progress_percent=100, speed_text="")
+
+        thumb_path = Path(file_path).with_suffix(".thumb.jpg")
+        try:
+            self.media_processor.extract_thumbnail(Path(file_path), thumb_path, timestamp_sec=3.0)
+        except Exception as e:
+            logger.debug(f"Không thể trích xuất thumbnail: {e}")
+
+        media_id = None
+        try:
+            probe = self.media_processor.inspect_video(Path(file_path))
+            checksum = self.media_processor.calculate_sha256(Path(file_path))
+            platform_final = detected_platform if detected_platform != "other" else task.source_platform
+            media_id = self.media_repo.add_media_asset(
+                local_path=Path(file_path),
+                checksum=checksum,
+                size_bytes=os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+                duration=probe.duration if probe else task.duration_sec,
+                source_platform=platform_final,
+                source_url=task.source_url,
+                width=probe.width if probe else 0,
+                height=probe.height if probe else 0,
+                thumbnail_path=thumb_path if thumb_path.exists() else None,
+            )
+        except Exception as e:
+            logger.error(f"Lỗi khi thêm media asset: {e}")
+
+        self.model.update_task(
+            task_id,
+            state="COMPLETED",
+            local_file_path=file_path,
+            media_id=media_id,
+            thumbnail_path=str(thumb_path) if thumb_path.exists() else task.thumbnail_path,
+            progress_percent=100,
+            speed_text="",
+        )
+
+        self.last_downloaded_data = {
+            "file_path": file_path,
+            "title": task.title,
+            "platform": detected_platform,
+            "media_id": media_id,
+            "url": task.source_url,
+        }
+        self.media_downloaded.emit()
+        self._pump_queue()
+        self._update_ui_state()
+
+    def _on_worker_error(self, task_id: str, err: str) -> None:
+        self.active_workers.pop(task_id, None)
+        self.model.update_task(task_id, state="FAILED", error_message=err, speed_text="")
+        self._pump_queue()
+        self._update_ui_state()
+
+    # --- THAO TÁC TRÊN CARD & SELECTION ---
+    def _on_card_checkbox_clicked(self, task_id: str) -> None:
+        self.model.toggle_select(task_id)
+        self._update_ui_state()
+
+    def _watch_task(self, task_id: str) -> None:
+        task = self.model.get_task(task_id)
+        if task and task.local_file_path and os.path.exists(task.local_file_path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(task.local_file_path))
+
+    def _open_task_folder(self, task_id: str) -> None:
+        task = self.model.get_task(task_id)
+        if task and task.local_file_path:
+            folder = str(Path(task.local_file_path).parent)
+            if os.name == "nt":
+                os.startfile(folder)
+            else:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _clear_queue(self) -> None:
+        if self.active_workers:
+            reply = QMessageBox.question(
+                self,
+                "Xác nhận dừng và xóa",
+                "Đang có tác vụ đang tải. Bạn có chắc muốn hủy tất cả và xóa danh sách?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        for w in list(self.active_workers.values()):
+            w._is_cancelled = True
+        self.active_workers.clear()
+        self.download_queue.clear()
+        self.model.clear_all()
+        self._update_ui_state()
+
+    def _clear_selection(self) -> None:
+        self.model.clear_selection()
+        self._update_ui_state()
+
+    # --- FILTER & SORT ---
+    def _on_filter_button_clicked(self, clicked_btn: QPushButton, filter_key: str) -> None:
+        for btn in self.filter_btn_group.buttons():
+            is_active = (btn == clicked_btn)
+            self._style_filter_button(btn, is_active)
+        self.model.set_filter(filter_key)
+        self._update_ui_state()
+
+    def _on_sort_changed(self) -> None:
+        idx = self.cb_sort.currentIndex()
+        mapping = {0: "newest", 1: "oldest", 2: "title", 3: "platform"}
+        self.model.set_sort(mapping.get(idx, "newest"))
+
+    def _update_ui_state(self) -> None:
+        counts = self.model.counts_by_state()
+        self.btn_f_all.setText(f"Tất cả ({counts['all']})")
+        self.btn_f_ready.setText(f"Chờ tải ({counts['ready']})")
+        self.btn_f_down.setText(f"Đang tải ({counts['downloading']})")
+        self.btn_f_comp.setText(f"Hoàn tất ({counts['completed']})")
+        self.btn_f_fail.setText(f"Lỗi ({counts['failed']})")
+
+        self.lbl_queue_heading.setText(f"Danh sách tải xuống • {counts['all']} video")
+        self.btn_download_all.setEnabled(counts["ready"] > 0 or counts["failed"] > 0)
+
+        # Chuyển đổi hiển thị Empty state vs Grid
+        if self.model.rowCount() == 0 and len(self.model._tasks) == 0:
+            self.content_stack.setCurrentIndex(1)
+        else:
+            self.content_stack.setCurrentIndex(0)
+
+        # Thanh tác vụ ngữ cảnh Bottom Bar
+        selected = self.model.get_selected_completed_tasks()
+        if selected:
+            self.bottom_bar.setVisible(True)
+            self.lbl_selected_summary.setText(f"☑ {len(selected)} video hoàn tất được chọn")
+        else:
+            self.bottom_bar.setVisible(False)
+
+    # --- FANPAGE PICKER & COMPOSER HANDOFF ---
+    def _open_fanpage_picker(self) -> None:
+        fanpages = []
+        if self.page_repo and hasattr(self.page_repo, "get_all_pages"):
+            try:
+                fanpages = self.page_repo.get_all_pages()
+            except Exception as e:
+                logger.debug(f"Không thể lấy danh sách Fanpage: {e}")
+
+        popup = FanpagePickerPopup(fanpages, list(self.selected_fanpage_ids), parent=self)
+        popup.pages_selected.connect(self._on_fanpages_selected)
+        btn_pos = self.btn_select_fanpage.mapToGlobal(QPoint(0, -popup.height()))
+        popup.move(btn_pos)
+        popup.exec()
+
+    def _on_fanpages_selected(self, page_ids: List[str]) -> None:
+        self.selected_fanpage_ids = set(page_ids)
+        if self.selected_fanpage_ids:
+            self.btn_select_fanpage.setText(f"Fanpage ({len(self.selected_fanpage_ids)}) ▾")
+        else:
+            self.btn_select_fanpage.setText("Fanpage đích ▾")
+
+    def _on_bulk_compose(self) -> None:
+        selected = self.model.get_selected_completed_tasks()
+        if not selected:
+            return
+
+        if len(selected) == 1:
+            t = selected[0]
+            self.send_to_composer.emit({
+                "file_path": t.local_file_path,
+                "media_id": t.media_id,
+                "title": t.title,
+                "platform": t.source_platform,
+                "url": t.source_url,
+            })
+        else:
+            self._open_batch_dialog("compose")
+
+    def _on_bulk_schedule(self) -> None:
+        self._open_batch_dialog("schedule")
+
+    def _open_batch_dialog(self, mode: str) -> None:
+        selected = self.model.get_selected_completed_tasks()
+        if not selected:
+            return
+
+        media_items = []
+        for t in selected:
+            media_items.append({
+                "id": t.media_id,
+                "title": t.title,
+                "local_path": t.local_file_path,
+                "thumbnail_path": t.thumbnail_path,
+                "duration": t.duration_sec,
+            })
+
+        fanpages = []
+        if self.page_repo and hasattr(self.page_repo, "get_all_pages"):
+            try:
+                fanpages = self.page_repo.get_all_pages()
+            except Exception:
+                pass
+
+        dlg = BatchComposeDialog(media_items, fanpages, initial_mode=mode, parent=self)
+        dlg.batch_confirmed.connect(self._on_batch_confirmed)
+        dlg.exec()
+
+    def _on_batch_confirmed(self, payload: dict) -> None:
+        # Tương thích đặt lịch hàng loạt
+        if hasattr(self, "batch_schedule_created"):
+            self.batch_schedule_created.emit([payload])
+
+    # --- CÁC HÀM TƯƠNG THÍCH NGƯỢC (TEST SUITE COMPATIBILITY) ---
     def _inspect_video(self) -> None:
         raw_url = self.url_input.text().strip()
+        if not raw_url:
+            raw_url = self.link_text_edit.toPlainText().strip()
         url = VideoDownloader.clean_url(raw_url)
         if not url:
             QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập liên kết video.")
@@ -510,7 +1775,6 @@ class VideoDownloadTab(QWidget):
         meta = self.downloader.extract_metadata(url)
         self.btn_inspect.setEnabled(True)
         self.btn_inspect.setText(" Lấy thông tin")
-        self.btn_inspect.setIcon(get_icon("search", "#A9B8CF", 14))
 
         if not meta:
             QMessageBox.critical(self, "Lỗi phân tích", "Không thể lấy thông tin video. Vui lòng kiểm tra lại đường link.")
@@ -523,49 +1787,57 @@ class VideoDownloadTab(QWidget):
         m, s = divmod(int(meta.duration), 60)
         self.lbl_meta_duration.setText(f"Thời lượng: {m:02d}:{s:02d}")
 
+        thumb_local_path = None
         if meta.thumbnail_url:
             try:
                 resp = requests.get(meta.thumbnail_url, timeout=5)
                 if resp.status_code == 200:
+                    temp_dir = Path(os.environ.get("TEMP", "/tmp")) / "lovira_thumbs"
+                    temp_dir.mkdir(parents=True, exist_ok=True)
+                    t_file = temp_dir / f"meta_inspect_{int(datetime.now().timestamp())}.jpg"
+                    t_file.write_bytes(resp.content)
+                    thumb_local_path = str(t_file)
                     pixmap = QPixmap()
                     pixmap.loadFromData(resp.content)
-                    self.thumb_label.setPixmap(
-                        pixmap.scaled(self.thumb_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    )
+                    self.thumb_label.setPixmap(pixmap)
             except Exception as e:
-                logger.debug(f"Không thể tải thumbnail từ URL: {e}")
+                logger.debug(f"Lỗi preview thumbnail: {e}")
+
+        # Đồng bộ tạo DownloadTask vào Grid
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task = DownloadTask(
+            task_id=task_id,
+            source_url=url,
+            normalized_url=url,
+            source_platform=self._inspected_platform,
+            title=meta.title or "Video không tên",
+            duration_sec=meta.duration or 0.0,
+            thumbnail_url=meta.thumbnail_url,
+            thumbnail_path=thumb_local_path,
+            state="READY",
+        )
+        self.model.add_task(task)
+        self._update_ui_state()
 
     def _start_download(self) -> None:
         raw_url = self.url_input.text().strip()
         url = VideoDownloader.clean_url(raw_url)
         if not url:
-            QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập liên kết video.")
             return
+        task = None
+        for t in self.model._tasks:
+            if t.normalized_url == url:
+                task = t
+                break
+        if not task:
+            task_id = f"task_{uuid.uuid4().hex[:8]}"
+            task = DownloadTask(task_id=task_id, source_url=url, normalized_url=url, state="READY")
+            self.model.add_task(task)
+        self._start_download_task(task.task_id)
 
-        if url != raw_url:
-            self.url_input.setText(url)
-
-        self.btn_download.setEnabled(False)
-        self.btn_cancel.setEnabled(True)
-        self.btn_compose_now.setVisible(False)
-        self.btn_watch_downloaded.setVisible(False)
-        self.btn_open_folder.setVisible(False)
-        self.progress_bar.setValue(0)
-        self.lbl_progress_status.setText("Đang khởi tạo tiến trình tải...")
-
-        detected = _detect_platform(url)
-        platform = self._inspected_platform if self._inspected_platform != "other" else detected
-        self.current_worker = VideoDownloadWorker(self.downloader, url, self.download_dir, platform=platform)
-        self.current_worker.progress_updated.connect(self._on_progress_update)
-        self.current_worker.finished_success.connect(self._on_download_success)
-        self.current_worker.finished_error.connect(self._on_download_error)
-        self.current_worker.start()
-
-    def _on_progress_update(self, data: dict) -> None:
-        percent = int(data.get("percent", 0))
-        speed = data.get("speed", "")
-        self.progress_bar.setValue(percent)
-        self.lbl_progress_status.setText(f"Đang tải: {percent}% ({speed})")
+    def _cancel_download(self) -> None:
+        for tid in list(self.active_workers.keys()):
+            self._cancel_download_task(tid)
 
     def _on_download_success(self, data: dict) -> None:
         self.btn_download.setEnabled(True)
@@ -579,11 +1851,9 @@ class VideoDownloadTab(QWidget):
             self.media_processor.extract_thumbnail(Path(file_path), thumb_path, timestamp_sec=3.0)
             if thumb_path.exists():
                 pixmap = QPixmap(str(thumb_path))
-                self.thumb_label.setPixmap(
-                    pixmap.scaled(self.thumb_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                )
+                self.thumb_label.setPixmap(pixmap)
         except Exception as e:
-            logger.debug(f"Không thể trích xuất thumbnail: {e}")
+            logger.debug(f"Lỗi trích xuất thumbnail: {e}")
 
         try:
             checksum = self.media_processor.calculate_sha256(Path(file_path))
@@ -595,14 +1865,14 @@ class VideoDownloadTab(QWidget):
                 size_bytes=os.path.getsize(file_path) if os.path.exists(file_path) else 0,
                 duration=probe.duration if probe else data.get("duration", 0.0),
                 source_platform=detected_platform,
-                source_url=self.url_input.text().strip(),
+                source_url=self.url_input.text().strip() or data.get("url", ""),
                 width=probe.width if probe else 0,
                 height=probe.height if probe else 0,
                 thumbnail_path=thumb_path if thumb_path.exists() else None,
             )
             data["media_id"] = media_id
         except Exception as e:
-            logger.error(f"Lỗi khi ghi nhận media asset: {e}")
+            logger.error(f"Lỗi khi thêm media asset: {e}")
 
         self.last_downloaded_data = data
         self.btn_watch_downloaded.setVisible(True)
@@ -610,17 +1880,37 @@ class VideoDownloadTab(QWidget):
         self.btn_compose_now.setVisible(True)
         self.media_downloaded.emit()
 
-    def _on_download_error(self, err_msg: str) -> None:
-        self.btn_download.setEnabled(True)
-        self.btn_cancel.setEnabled(False)
-        self.lbl_progress_status.setText("❌ Tải video thất bại.")
-        QMessageBox.critical(self, "Lỗi tải video", f"Không thể tải video:\n{err_msg}")
-
-    def _cancel_download(self) -> None:
-        if self.current_worker:
-            self.current_worker._is_cancelled = True
-        self.lbl_progress_status.setText("Đang dừng tiến trình tải...")
-        self.btn_cancel.setEnabled(False)
+        url = data.get("url") or self.url_input.text().strip()
+        task = None
+        for t in self.model._tasks:
+            if t.normalized_url == url or (t.local_file_path and t.local_file_path == file_path):
+                task = t
+                break
+        if task:
+            self.model.update_task(
+                task.task_id,
+                state="COMPLETED",
+                progress_percent=100,
+                local_file_path=file_path,
+                media_id=data.get("media_id"),
+                thumbnail_path=str(thumb_path) if thumb_path.exists() else task.thumbnail_path,
+            )
+        else:
+            task = DownloadTask(
+                task_id=f"task_{uuid.uuid4().hex[:8]}",
+                source_url=url,
+                normalized_url=url,
+                source_platform=data.get("platform", "other"),
+                title=data.get("title") or Path(file_path).stem,
+                duration_sec=data.get("duration", 0.0),
+                thumbnail_path=str(thumb_path) if thumb_path.exists() else None,
+                state="COMPLETED",
+                progress_percent=100,
+                local_file_path=file_path,
+                media_id=data.get("media_id"),
+            )
+            self.model.add_task(task)
+        self._update_ui_state()
 
     def _watch_last_downloaded(self) -> None:
         if self.last_downloaded_data and "file_path" in self.last_downloaded_data:
@@ -640,82 +1930,12 @@ class VideoDownloadTab(QWidget):
         if self.last_downloaded_data:
             self.send_to_composer.emit(self.last_downloaded_data)
 
-    # --- BATCH DOWNLOAD LOGIC ---
     def _start_batch_download(self) -> None:
-        raw_text = self.batch_text_edit.toPlainText().strip()
-        lines = []
-        for line in raw_text.splitlines():
-            clean = VideoDownloader.clean_url(line)
-            if clean:
-                lines.append(clean)
-
-        if not lines:
-            QMessageBox.warning(self, "Chưa nhập link", "Vui lòng nhập ít nhất một liên kết video.")
-            return
-
-        self.btn_start_batch.setEnabled(False)
-        self.btn_cancel_batch.setEnabled(True)
-        self.batch_progress_bar.setVisible(True)
-        self.batch_progress_bar.setValue(0)
-        self.table_batch_results.setRowCount(0)
-
-        self.batch_worker = BatchDownloadWorker(self.downloader, lines, self.download_dir)
-        self.batch_worker.progress_updated.connect(self._on_batch_progress)
-        self.batch_worker.item_downloaded.connect(self._on_batch_item_downloaded)
-        self.batch_worker.finished_all.connect(self._on_batch_finished)
-        self.batch_worker.start()
-
-    def _on_batch_progress(self, current: int, total: int, url: str, percent: int) -> None:
-        self.batch_progress_bar.setValue(percent)
-        self.lbl_batch_status.setText(f"Đang tải {current}/{total}: {url[:40]}... ({percent}%)")
-
-    def _on_batch_item_downloaded(self, data: dict) -> None:
-        row = self.table_batch_results.rowCount()
-        self.table_batch_results.insertRow(row)
-        self.table_batch_results.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-        self.table_batch_results.setItem(row, 1, QTableWidgetItem(data["title"]))
-        self.table_batch_results.setItem(row, 2, QTableWidgetItem(data["file_path"]))
-
-        btn_view = QPushButton("▶ Xem")
-        fp = data["file_path"]
-        btn_view.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(fp)))
-        self.table_batch_results.setCellWidget(row, 3, btn_view)
-
-        try:
-            probe = self.media_processor.inspect_video(Path(fp))
-            checksum = self.media_processor.calculate_sha256(Path(fp))
-            thumb_path = Path(fp).with_suffix(".thumb.jpg")
-            try:
-                self.media_processor.extract_thumbnail(Path(fp), thumb_path, timestamp_sec=3.0)
-            except Exception:
-                pass
-
-            detected_platform = data.get("platform") or _detect_platform(data.get("url", ""))
-            self.media_repo.add_media_asset(
-                local_path=Path(fp),
-                checksum=checksum,
-                size_bytes=os.path.getsize(fp) if os.path.exists(fp) else 0,
-                duration=probe.duration if probe else 0.0,
-                source_platform=detected_platform,
-                source_url=data.get("url", ""),
-                thumbnail_path=thumb_path if thumb_path.exists() else None,
-            )
-            self.media_downloaded.emit()
-        except Exception as e:
-            logger.error(f"Lỗi khi thêm media asset từ batch: {e}")
-
-    def _on_batch_finished(self, success: int, total: int) -> None:
-        self.btn_start_batch.setEnabled(True)
-        self.btn_cancel_batch.setEnabled(False)
-        self.batch_progress_bar.setValue(100)
-        self.lbl_batch_status.setText(f"✅ Hoàn tất tải hàng loạt: {success}/{total} video thành công.")
-        QMessageBox.information(self, "Tải hàng loạt xong", f"Đã tải thành công {success}/{total} video!")
+        self._analyze_input_links()
 
     def _cancel_batch_download(self) -> None:
-        if self.batch_worker:
-            self.batch_worker._is_cancelled = True
-        self.lbl_batch_status.setText("Đang dừng tải hàng loạt...")
-        self.btn_cancel_batch.setEnabled(False)
+        self._cancel_download()
+
 
 
 # =========================================================================
@@ -2823,6 +4043,8 @@ class VideoWorkspaceView(QWidget):
             media_repo=media_repo,
             media_processor=media_processor,
             download_dir=download_dir,
+            page_repo=page_repo,
+            queue_repo=queue_repo,
         )
         self.tab_library = MediaLibraryTab(
             media_repo=media_repo,
@@ -2838,6 +4060,7 @@ class VideoWorkspaceView(QWidget):
         self.tab_library.send_to_composer.connect(self.send_to_composer.emit)
 
         # Nối tín hiệu batch schedule
+        self.tab_download.batch_schedule_created.connect(self.batch_schedule_created.emit)
         self.tab_library.batch_schedule_created.connect(self.batch_schedule_created.emit)
 
         # Nối nút chuyển từ Thư viện sang tab Tải
