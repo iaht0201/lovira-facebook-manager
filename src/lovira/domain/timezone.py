@@ -11,6 +11,7 @@ from typing import Tuple, Union
 from zoneinfo import ZoneInfo
 
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+VIETNAM_TZ = VN_TZ
 UTC_TZ = timezone.utc
 
 

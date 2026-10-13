@@ -153,5 +153,35 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   3. A-03: `TopCommandBar` tích hợp ô tìm kiếm nhanh với debounce 250ms và phím tắt `Ctrl+K`.
   4. A-04: Header Page Selector kết nối `GlobalPageContext` phát signal lọc dữ liệu cho các workspace con.
 
+---
 
+### Task UX-04: Shared UI Primitives
 
+- **Thời gian:** 13/10/2026 12:43 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** (đang chuẩn bị commit)
+- **Command 1:** `pytest tests/test_ux04_shared_primitives.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux04_shared_primitives.py::test_status_chip_rendering_and_state_mapping PASSED [ 16%]
+  tests/test_ux04_shared_primitives.py::test_empty_state_factory_methods_and_cta PASSED [ 33%]
+  tests/test_ux04_shared_primitives.py::test_feedback_banner_and_toast PASSED [ 50%]
+  tests/test_ux04_shared_primitives.py::test_safe_confirm_dialog_impact_and_checkbox_lock PASSED [ 66%]
+  tests/test_ux04_shared_primitives.py::test_datetime_picker_vn_timezone_and_validation PASSED [ 83%]
+  tests/test_ux04_shared_primitives.py::test_media_thumbnail_card_signals PASSED [100%]
+  ============================== 6 passed in 0.24s ==============================
+  ```
+- **Command 2 (Full Gate):** `pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 95 items
+  ...
+  ============================= 95 passed in 8.29s ==============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `StatusChip`: 12 trạng thái DB/API được ánh xạ chuẩn xác tiếng Việt, màu sắc phân biệt theo chuẩn WCAG AA, có tooltip và hỗ trợ cập nhật động `update_status`.
+  2. `EmptyState`: Khắc phục lỗi A-09 (màn hình rỗng 600px). Có đầy đủ 4 preset (`no_pages`, `no_schedules`, `no_media`, `search_not_found`) với icon minh họa và CTA signal.
+  3. `FeedbackBanner` & `ToastNotification` & `InlineError`: Cung cấp 3 cấp độ phản hồi người dùng (banner tĩnh, nhãn lỗi trường nhập, toast nổi thoáng qua có timer tự đóng).
+  4. `SafeConfirmDialog`: Khóa an toàn nút hành động nguy hiểm cho đến khi tích checkbox xác nhận; liệt kê danh sách tác động cụ thể (impact items).
+  5. `DateTimePickerVN`: Bảo đảm múi giờ nghiệp vụ Việt Nam (UTC+7), độc lập hoàn toàn với OS, chuyển đổi ISO UTC chuẩn hóa SQLite và kiểm tra tính hợp lệ trong tương lai.
+  6. `MediaThumbnailCard`: Khung xem trước 16:9, overlay thời lượng, badge TikTok/Douyin/FB, nút bấm phát signal gửi thẳng vào Composer.

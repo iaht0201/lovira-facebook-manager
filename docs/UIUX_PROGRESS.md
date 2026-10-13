@@ -13,8 +13,8 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 | **UX-01** | Safety Fixes & P0 Audit | P0 | UX-00 | **DONE** | 13/10/2026 |
 | **UX-02** | Design Tokens & Theme Engine | P1 | UX-00 | **DONE** | 13/10/2026 |
 | **UX-03** | Desktop Shell & 10 Routes | P0 | UX-02 | **DONE** | 13/10/2026 |
-| **UX-04** | Shared UI Primitives | P1 | UX-03 | TODO | — |
-| **UX-05** | Dashboard 2.0 | P1 | UX-04 | TODO | — |
+| **UX-04** | Shared UI Primitives | P1 | UX-03 | **DONE** | 13/10/2026 |
+| **UX-05** | Dashboard 2.0 | P1 | UX-04 | IN PROGRESS | — |
 | **UX-06** | Fanpage Workspace 2.0 | P0 | UX-04, UX-01 | TODO | — |
 | **UX-07** | Unified Post Composer 2.0 | P0 | UX-06 | TODO | — |
 | **UX-08** | Schedule Workspace 2.0 | P0 | UX-07 | TODO | — |
@@ -148,4 +148,45 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
   - Không để lộ token trong nhật ký Activity.
   - Chuyển route bằng enum an toàn, không có crash hay out-of-bounds index.
 - **Why DONE is justified:** Cả 4 lỗi audit A-01, A-02, A-03, A-04 đã được khắc phục hoàn toàn; 10 route đồng bộ một nguồn chân lý; 89/89 tests passed.
-- **Next unblocked task:** UX-04 — Shared UI Primitives.
+
+---
+
+### UX-04 — Shared UI Primitives
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 12:40 — 13/10/2026 12:45
+- **Baseline SHA / Commit SHA:** `1c9061e` / (đang chuẩn bị commit)
+- **Scope and no-go changes:**
+  - Xây dựng 6 UI Primitives dùng chung chuẩn mực theo mục 5 của `docs/UIUX_REDESIGN_PLANNING.md`:
+    1. `StatusChip` (`status_chip.py`): Ánh xạ 12 trạng thái DB/API (`ready`, `unverified`, `token_expired`, `insufficient_permissions`, `scheduled_local`, `scheduled_remote`, `publishing`, `published`, `failed`, `cancelled`, `rate_limited`, `unknown`) sang vector icon + nhãn tiếng Việt + màu WCAG AA + tooltip giải thích.
+    2. `EmptyState` (`empty_state.py`): Triệt tiêu màn hình rỗng chết 600px (khắc phục lỗi audit A-09), cung cấp minh họa icon lớn, thông điệp rõ ràng và nút CTA kích hoạt hành động (`no_pages`, `no_schedules`, `no_media`, `search_not_found`).
+    3. `FeedbackBanner`, `InlineError`, `ToastNotification` (`feedback.py`): Khung cảnh báo tĩnh có hành động, nhãn báo lỗi đỏ tức thì sát input, thông báo nổi thoáng qua (non-modal) tự động tắt sau 3.5s.
+    4. `SafeConfirmDialog` (`confirm.py`): Hộp thoại xác nhận an toàn cho các tác vụ nguy hiểm (gỡ page, hủy lịch, xóa video), tóm tắt rõ tác động và khóa nút xóa đỏ cho tới khi người dùng tích ô xác nhận.
+    5. `DateTimePickerVN` (`datetime_picker_vn.py`): Bộ chọn ngày giờ độc lập với múi giờ OS, luôn ghim múi giờ Việt Nam (UTC+7), chuyển đổi 2 chiều chính xác với ISO UTC SQLite và kiểm tra tính hợp lệ trong tương lai.
+    6. `MediaThumbnailCard` (`media_card.py`): Thẻ xem trước video tỷ lệ 16:9 với overlay thời lượng, huy hiệu nền tảng (TikTok, Douyin, Facebook) và nút thao tác nhanh `Soạn bài ngay`.
+  - Khởi tạo `src/lovira/ui/widgets/__init__.py` tập trung hóa imports.
+- **Existing behavior to preserve:** Múi giờ Việt Nam độc lập với OS (`Asia/Ho_Chi_Minh`), không thay đổi cấu trúc bảng SQLite hay nghiệp vụ mã hóa.
+- **Changed files:**
+  - `src/lovira/ui/widgets/__init__.py` (new)
+  - `src/lovira/ui/widgets/status_chip.py` (new)
+  - `src/lovira/ui/widgets/empty_state.py` (new)
+  - `src/lovira/ui/widgets/feedback.py` (new)
+  - `src/lovira/ui/widgets/confirm.py` (new)
+  - `src/lovira/ui/widgets/datetime_picker_vn.py` (new)
+  - `src/lovira/ui/widgets/media_card.py` (new)
+  - `src/lovira/domain/timezone.py` (added `VIETNAM_TZ` alias)
+  - `tests/test_ux04_shared_primitives.py` (new - 6 test cases)
+- **UI states implemented:**
+  - 12 trạng thái StatusChip đầy đủ tooltip và màu sắc đạt chuẩn.
+  - 4 biến thể EmptyState có CTA chuyển hướng.
+  - ToastNotification có timer tự tắt và nút đóng.
+  - SafeConfirmDialog trạng thái khóa và mở khóa nút nguy hiểm.
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux04_shared_primitives.py -v`: 6 passed in 0.24s.
+  - `pytest tests/ -v`: 95 passed in 8.29s (toàn bộ 95/95 tests xanh 100%).
+- **Security & a11y self-review:**
+  - SafeConfirmDialog chặn triệt để thao tác bấm nhầm xóa dữ liệu/hủy lịch.
+  - Toàn bộ màu sắc và nhãn trạng thái đều đạt chuẩn WCAG AA và có tooltip hỗ trợ.
+  - DateTimePickerVN bảo đảm không tạo lịch quá khứ hay lệch múi giờ.
+- **Why DONE is justified:** Cả 6 primitives cốt lõi của Lovira Workspace 2.0 đã hoàn thiện, kiểm thử tự động đạt 100% tỷ lệ đỗ (95/95 tests), sẵn sàng lắp ghép vào các Workspace chuyên biệt.
+- **Next unblocked task:** UX-05 — Dashboard 2.0 (`overview_workspace.py`).
+
