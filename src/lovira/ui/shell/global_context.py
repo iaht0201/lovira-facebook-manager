@@ -15,6 +15,7 @@ class GlobalPageContext(QObject):
     """
 
     page_scope_changed = Signal(object)      # Phát ra Optional[str]: None hoặc page_id
+    page_changed = page_scope_changed        # Thuận tiện gọi
     search_submitted = Signal(str)            # Phát ra khi bấm Enter
     search_query_changed = Signal(str)        # Phát ra sau khi debounce 250ms
 

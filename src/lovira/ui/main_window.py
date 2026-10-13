@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self.policy_manager = policy_manager
         self.tray_manager = tray_manager
         self.context = GlobalPageContext.get_instance()
+        self.page_context = self.context  # Alias thuận tiện
 
         self.setWindowTitle("Lovira-Facebook Manager")
         self.resize(1260, 800)

@@ -14,8 +14,8 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 | **UX-02** | Design Tokens & Theme Engine | P1 | UX-00 | **DONE** | 13/10/2026 |
 | **UX-03** | Desktop Shell & 10 Routes | P0 | UX-02 | **DONE** | 13/10/2026 |
 | **UX-04** | Shared UI Primitives | P1 | UX-03 | **DONE** | 13/10/2026 |
-| **UX-05** | Dashboard 2.0 | P1 | UX-04 | IN PROGRESS | — |
-| **UX-06** | Fanpage Workspace 2.0 | P0 | UX-04, UX-01 | TODO | — |
+| **UX-05** | Dashboard 2.0 | P1 | UX-04 | **DONE** | 13/10/2026 |
+| **UX-06** | Fanpage Workspace 2.0 | P0 | UX-04, UX-01 | IN PROGRESS | — |
 | **UX-07** | Unified Post Composer 2.0 | P0 | UX-06 | TODO | — |
 | **UX-08** | Schedule Workspace 2.0 | P0 | UX-07 | TODO | — |
 | **UX-09** | Media Library & Video Downloader 2.0 | P1 | UX-07 | TODO | — |
@@ -188,5 +188,43 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
   - Toàn bộ màu sắc và nhãn trạng thái đều đạt chuẩn WCAG AA và có tooltip hỗ trợ.
   - DateTimePickerVN bảo đảm không tạo lịch quá khứ hay lệch múi giờ.
 - **Why DONE is justified:** Cả 6 primitives cốt lõi của Lovira Workspace 2.0 đã hoàn thiện, kiểm thử tự động đạt 100% tỷ lệ đỗ (95/95 tests), sẵn sàng lắp ghép vào các Workspace chuyên biệt.
-- **Next unblocked task:** UX-05 — Dashboard 2.0 (`overview_workspace.py`).
 
+---
+
+### UX-05 — Dashboard 2.0 (`overview_workspace.py`)
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 12:46 — 13/10/2026 12:53
+- **Baseline SHA / Commit SHA:** `4afb0c5` / (đang chuẩn bị commit)
+- **Scope and no-go changes:**
+  - Nâng cấp màn hình Tổng quan thành Dashboard 2.0 theo mockup `01_tong_quan.png` (khắc phục dứt điểm A-09):
+    1. **Header chào thời gian thực:** Lời chào theo buổi (Sáng/Chiều/Tối), tiêu đề và subtitle rõ ràng, nút `Làm mới` và nút `+ Soạn bài ngay` (primary accent).
+    2. **4 MetricCards Click-Through:** Tích hợp `clicked(route)` để bấm trực tiếp chuyển sang các workspace tương ứng (`pages`, `schedule`, `media`, `settings`), hỗ trợ `PointingHandCursor` và chevron chỉ hướng.
+    3. **Actionable Alert Banner:** Tự động phát hiện Fanpage token hết hạn (`token_expired`), thiếu quyền (`insufficient_permissions`) hoặc bài viết gặp lỗi (`failed_final`, `missed`) và hiển thị cảnh báo tĩnh kèm hướng dẫn. Ẩn khi hệ thống bình thường.
+    4. **Schedule Timeline 7 ngày (`ScheduleTimelineWidget`):** Hiển thị dải 7 ngày tới (tính từ hôm nay theo giờ VN UTC+7), đếm chính xác số bài lên lịch từng ngày và hỗ trợ nhấp chuột lọc lịch.
+    5. **Bảng Recent Jobs & Onboarding EmptyState:** Tích hợp `QStackedLayout` giữa Bảng tác vụ và `EmptyState`. Khi 0 page hiển thị `EmptyState.no_pages`, khi 0 job hiển thị `EmptyState.no_schedules`. Khi có bài viết, bảng hiển thị hiện đại với `StatusChip` và giờ Việt Nam.
+    6. **Đồng bộ hóa với `GlobalPageContext`:** Tự động lọc toàn bộ số liệu thẻ metric và bảng jobs theo Fanpage được chọn từ Header.
+- **Existing behavior to preserve:** Bảo toàn 100% các attribute cũ `card_pages`, `card_schedules`, `card_media`, `card_status`, `table_recent`, `quick_post_requested`, `download_video_requested`, `add_page_requested`, `bulk_import_requested`, bảo đảm tương thích với mọi test cũ.
+- **Changed files:**
+  - `src/lovira/ui/widgets/schedule_timeline.py` (new)
+  - `src/lovira/ui/widgets/__init__.py` (updated)
+  - `src/lovira/ui/views/overview_workspace.py` (upgraded)
+  - `src/lovira/ui/main_window.py` (added page_context alias)
+  - `src/lovira/ui/shell/global_context.py` (added page_changed alias)
+  - `src/lovira/app.py` (connected view_overview.navigate_requested and page_context)
+  - `tests/test_ux05_dashboard.py` (new - 5 test cases)
+  - `docs/redesign_screenshots/01_dashboard_v2.png` (captured visual snapshot)
+- **UI states implemented:**
+  - Onboarding 0 Fanpage (EmptyState no_pages).
+  - EmptyState no_schedules khi chưa có lịch đăng nào.
+  - Alert Banner cảnh báo token/lỗi bài viết (warning/danger).
+  - Timeline 7 ngày có bài đăng.
+  - Bảng Recent Jobs có StatusChip đầy đủ màu sắc và tooltip.
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux05_dashboard.py -v`: 5 passed in 0.76s.
+  - `pytest tests/ -v`: 100 passed in 9.13s (toàn bộ 100/100 tests xanh 100%).
+- **Security & a11y self-review:**
+  - MetricCards và nút điều hướng có cursor hand rõ ràng.
+  - Múi giờ bài đăng trên Timeline và Recent Jobs độc lập hoàn toàn với OS, luôn chạy theo `Asia/Ho_Chi_Minh`.
+  - Alert Banner không để lộ token thô.
+- **Why DONE is justified:** Toàn bộ tiêu chí nghiệm thu của Dashboard 2.0 đã hoàn thành, có visual snapshot `01_dashboard_v2.png`, 100/100 tests passed.
+- **Next unblocked task:** UX-06 — Fanpage Workspace 2.0 (`pages_workspace.py`).

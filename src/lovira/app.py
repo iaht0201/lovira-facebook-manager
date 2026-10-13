@@ -167,6 +167,7 @@ def create_application() -> MainWindow:
         queue_repo=queue_repo,
         license_client=license_client,
         policy_manager=policy_manager,
+        page_context=main_window.page_context,
     )
     view_pages = PagesWorkspaceView(page_repo=page_repo, fb_client=fb_client)
     view_video = VideoWorkspaceView(
@@ -262,6 +263,20 @@ def create_application() -> MainWindow:
     sb.get_button(Route.BULK_IMPORT).clicked.connect(open_bulk_import_popup)
 
     # Nối tín hiệu từ Overview Dashboard
+    def handle_overview_navigate(route_key: str):
+        route_map = {
+            "pages": Route.PAGES,
+            "schedule": Route.SCHEDULE,
+            "media": Route.MEDIA,
+            "downloads": Route.DOWNLOADS,
+            "settings": Route.SETTINGS,
+            "composer": Route.COMPOSER,
+            "activity": Route.ACTIVITY,
+        }
+        if route_key in route_map:
+            nav.navigate_to(route_map[route_key])
+
+    view_overview.navigate_requested.connect(handle_overview_navigate)
     view_overview.quick_post_requested.connect(open_quick_post_popup)
     view_overview.download_video_requested.connect(lambda: nav.navigate_to(Route.DOWNLOADS))
     view_overview.add_page_requested.connect(lambda: (ConnectPageDialog(fb_client, page_repo, main_window).exec(), view_pages.reload_pages()))

@@ -185,3 +185,36 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   4. `SafeConfirmDialog`: Khóa an toàn nút hành động nguy hiểm cho đến khi tích checkbox xác nhận; liệt kê danh sách tác động cụ thể (impact items).
   5. `DateTimePickerVN`: Bảo đảm múi giờ nghiệp vụ Việt Nam (UTC+7), độc lập hoàn toàn với OS, chuyển đổi ISO UTC chuẩn hóa SQLite và kiểm tra tính hợp lệ trong tương lai.
   6. `MediaThumbnailCard`: Khung xem trước 16:9, overlay thời lượng, badge TikTok/Douyin/FB, nút bấm phát signal gửi thẳng vào Composer.
+
+---
+
+### Task UX-05: Dashboard 2.0 (`overview_workspace.py`)
+
+- **Thời gian:** 13/10/2026 12:51 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** (đang chuẩn bị commit)
+- **Visual Snapshot:** `docs/redesign_screenshots/01_dashboard_v2.png` (113 KB, chuẩn thiết kế mockup `01_tong_quan.png`).
+- **Command 1:** `pytest tests/test_ux05_dashboard.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux05_dashboard.py::test_metric_card_click_through PASSED      [ 20%]
+  tests/test_ux05_dashboard.py::test_dashboard_empty_states PASSED         [ 40%]
+  tests/test_ux05_dashboard.py::test_dashboard_alert_banner_and_status_chips PASSED [ 60%]
+  tests/test_ux05_dashboard.py::test_dashboard_7day_schedule_timeline PASSED [ 80%]
+  tests/test_ux05_dashboard.py::test_dashboard_global_page_context_filtering PASSED [100%]
+  ============================== 5 passed in 0.76s ==============================
+  ```
+- **Command 2 (Full Gate):** `pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 100 items
+  ...
+  ============================= 100 passed in 9.13s =============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `MetricCard Click-Through`: Cả 4 thẻ metric (Fanpage, Lịch hôm nay, Kho video, Bản quyền) hỗ trợ click phát tín hiệu điều hướng kèm con trỏ tay chỉ `PointingHandCursor` và biểu tượng chuyển tiếp.
+  2. `Actionable Alert Banner`: Tự động kiểm tra Fanpage token hết hạn hoặc bài viết gặp lỗi để hiển thị banner cảnh báo thông minh, ẩn hoàn toàn khi hệ thống an toàn.
+  3. `ScheduleTimelineWidget`: Phân bổ dải 7 ngày trực quan theo giờ Việt Nam (`Asia/Ho_Chi_Minh`), đếm chính xác số bài lên lịch và tóm tắt tổng số bài.
+  4. `Onboarding & EmptyState`: Tự động chuyển đổi giữa Bảng tác vụ và `EmptyState` (`no_pages` khi 0 fanpage, `no_schedules` khi chưa có bài viết).
+  5. `StatusChip Integration`: Bảng các tác vụ gần đây gắn chip trạng thái nhiều màu sắc chuẩn WCAG AA và hiển thị giờ đăng Việt Nam chuẩn xác.
+  6. `GlobalPageContext Filtering`: Khi người dùng chuyển đổi Fanpage trên TopBar, Dashboard lập tức lọc và cập nhật toàn bộ số liệu thẻ metric và bảng tác vụ theo Page đó.
