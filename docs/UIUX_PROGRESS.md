@@ -233,7 +233,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-06 — Fanpage Workspace 2.0 (`pages_workspace.py`)
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 12:54 — 13/10/2026 12:57
-- **Baseline SHA / Commit SHA:** `6b61a9f` / (đang chuẩn bị commit)
+- **Baseline SHA / Commit SHA:** `6b61a9f` / `ad415ff`
 - **Scope and no-go changes:**
   - Nâng cấp Fanpage Workspace thành phiên bản 2.0 theo mockup `02_fanpage.png`:
     1. **ConnectPageDialog Wizard 2.0:** Chia 2 Tab trực quan: (1) Nhập trực tiếp Page ID & Page Token; (2) Quét tự động từ User Access Token.

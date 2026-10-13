@@ -225,7 +225,7 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
 
 - **Thời gian:** 13/10/2026 12:56 VN
 - **Branch:** `feature/uiux-redesign-v2`
-- **Commit:** (đang chuẩn bị commit)
+- **Commit:** `ad415ff`
 - **Visual Snapshot:** `docs/redesign_screenshots/02_fanpage_v2.png` (90 KB, chuẩn thiết kế mockup `02_fanpage.png`).
 - **Command 1:** `pytest tests/test_ux06_pages_workspace.py -v`
 - **Kết quả Command 1:**
