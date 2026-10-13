@@ -172,12 +172,19 @@ def test_bulk_import_strict_no_fallback_ac07(qapp, temp_db, tmp_path):
         dlg._start_import_process()
         worker = dlg.worker
         if worker:
-            worker.wait(5000)
+            for _ in range(100):
+                if not worker.isRunning():
+                    break
+                qapp.processEvents()
+                import time
+                time.sleep(0.02)
         qapp.processEvents()
 
     # Chỉ duy nhất 1 job được tạo cho p1, không có job nào cho p2 hay ghost
     jobs = queue_repo.list_jobs()
     assert len(jobs) == 1
+    dlg.close()
+
     assert jobs[0]["page_id"] == p1
     assert jobs[0]["page_id"] != p2
 

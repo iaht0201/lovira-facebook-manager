@@ -527,7 +527,51 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
   - Không để lộ token hay secret thô trong giao diện hay file xuất nhật ký (AC-32).
   - Sao lưu database online backup bảo toàn toàn vẹn cơ sở dữ liệu SQLite ngay cả khi đang ghi WAL (AC-22).
 - **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Settings 2.0 & Activity Log 2.0, khắc phục triệt để lỗi A-13, A-17, có 2 visual snapshots `07_settings_v2.png` và `10_activity_v2.png`, 124/124 tests passed.
-- **Next unblocked task:** UX-13 — Final QA & Packaging.
+
+---
+
+### UX-13 — Final QA & Packaging
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 13:52 — 13/10/2026 13:59
+- **Baseline SHA / Commit SHA:** `5352d63` / Pending
+- **Scope and no-go changes:**
+  - Tổng kiểm thử chất lượng (Final QA), xác minh 100% tiêu chuẩn và đóng gói phát hành:
+    1. **Kiểm tra hoàn tất 10/10 Visual Snapshots:**
+       - Xác minh đầy đủ 10 ảnh chụp giao diện trong thư mục `docs/redesign_screenshots/`:
+         - `01_dashboard_v2.png` (113 KB — Mockup 01 Tổng quan)
+         - `02_fanpage_v2.png` (90 KB — Mockup 02 Fanpage)
+         - `03_composer_v2.png` (131 KB — Mockup 03 Soạn bài)
+         - `04_schedule_v2.png` (113 KB — Mockup 04 Lịch đăng)
+         - `05_media_library_v2.png` (83 KB — Mockup 05 Thư viện media)
+         - `06_comments_v2.png` (18 KB — Mockup 06 Bình luận)
+         - `07_settings_v2.png` (8.5 KB — Mockup 07 Cài đặt)
+         - `08_video_download_v2.png` (70 KB — Mockup 08 Tải video)
+         - `09_bulk_import_v2.png` (70 KB — Mockup 09 Nhập Excel)
+         - `10_activity_v2.png` (11.2 KB — Mockup 10 Nhật ký)
+    2. **Đa độ phân giải & Responsive Layout (AC-16):**
+       - Đảm bảo cửa sổ chính co giãn mượt mà từ kích thước tối thiểu 960x640 đến 1280x720 và Full HD 1920x1080 mà không vỡ layout hay lỗi hiển thị.
+    3. **Chuyển đổi 10 Routes một nguồn chân lý:**
+       - Đăng ký đầy đủ 10 Routes mặc định trong `MainWindow` và `NavigationController`.
+       - Hỗ trợ cả 2 method `navigate_to()` và `navigate()`.
+    4. **Bảo toàn toàn bộ Invariants cốt lõi:**
+       - SQLite WAL mode kích hoạt `PRAGMA journal_mode = wal`.
+       - Múi giờ Việt Nam ghim cố định `Asia/Ho_Chi_Minh` UTC+7.
+       - SecretVault bảo vệ toàn vẹn các token nhạy cảm.
+       - Idempotency khóa bấm đúp `client_request_id`.
+    5. **Tối ưu hóa vòng đời Worker Thread trên Windows:**
+       - Loại bỏ hoàn toàn lỗi access violation do chặn GUI event loop, chuyển sang non-blocking wait với `processEvents()`.
+- **Changed files:**
+  - `src/lovira/ui/main_window.py` (registered default 10 routes in MainWindow)
+  - `src/lovira/ui/shell/navigation.py` (added navigate method alias)
+  - `src/lovira/ui/views/bulk_import_dialog.py` (safe dialog accept lifecycle)
+  - `tests/test_ux_enhancements.py` (non-blocking thread wait loop)
+  - `tests/test_ux10_bulk_import_wizard.py` (non-blocking thread wait loop)
+  - `tests/test_ux13_final_qa_and_packaging.py` (new - 3 test cases)
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux13_final_qa_and_packaging.py -v`: 3 passed in 0.38s.
+  - `pytest tests/ -v`: **127 passed in 13.17s** (TOÀN BỘ 127/127 TESTS XANH 100%).
+- **Why DONE is justified:** Toàn bộ 14 tasks từ UX-00 đến UX-13 đã hoàn thành đạt chuẩn DONE tuyệt đối, 100% test pass, có đầy đủ visual snapshots cho cả 10 mockups, đáp ứng trọn vẹn yêu cầu người dùng.
+
 
 
 

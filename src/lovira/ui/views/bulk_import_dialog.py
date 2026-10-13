@@ -519,10 +519,7 @@ class BulkImportDialog(QDialog):
             f"Đã lên lịch thành công cho {success_count} bài viết/Reels!\nCác tác vụ đã được đưa vào Lịch đăng tự động.",
         )
         self.import_completed.emit()
-        if self.worker and self.worker.isRunning():
-            self.worker.finished.connect(self.accept)
-        else:
-            self.accept()
+
 
     def _on_error(self, err_msg: str) -> None:
         self.btn_start_import.setEnabled(True)

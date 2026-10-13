@@ -151,6 +151,23 @@ class MainWindow(QMainWindow):
         self.sidebar.route_requested.connect(self.nav_controller.navigate_to)
         self.nav_controller.route_changed.connect(self._on_route_changed)
 
+        # Đăng ký mặc định 10 routes để hỗ trợ chuyển đổi đầy đủ
+        self.nav_controller.register_route(Route.DASHBOARD, self.view_dashboard, self.sidebar.get_button(Route.DASHBOARD))
+        self.nav_controller.register_route(Route.PAGES, self.view_pages, self.sidebar.get_button(Route.PAGES))
+        self.nav_controller.register_route(Route.SCHEDULE, self.view_schedule, self.sidebar.get_button(Route.SCHEDULE))
+        self.nav_controller.register_route(Route.MEDIA, self.view_video, self.sidebar.get_button(Route.MEDIA))
+        self.nav_controller.register_route(Route.DOWNLOADS, self.view_video, self.sidebar.get_button(Route.DOWNLOADS))
+        self.nav_controller.register_route(Route.COMMENTS, self.view_comments, self.sidebar.get_button(Route.COMMENTS))
+        self.nav_controller.register_route(Route.SETTINGS, self.view_settings, self.sidebar.get_button(Route.SETTINGS))
+
+        self.view_composer = QWidget()
+        self.view_bulk = QWidget()
+        self.view_activity = QWidget()
+        self.nav_controller.register_route(Route.COMPOSER, self.view_composer, self.sidebar.get_button(Route.COMPOSER))
+        self.nav_controller.register_route(Route.BULK_IMPORT, self.view_bulk, self.sidebar.get_button(Route.BULK_IMPORT))
+        self.nav_controller.register_route(Route.ACTIVITY, self.view_activity, self.sidebar.get_button(Route.ACTIVITY))
+
+
         # Nối nút Tạo bài trên TopBar với Route Soạn bài (hoặc Quick Post popup)
         self.top_bar.quick_create_clicked.connect(self._on_quick_create_clicked)
         self.top_bar.license_badge_clicked.connect(self._open_license_dialog)

@@ -152,10 +152,18 @@ def test_bulk_import_dialog_export_and_process(qapp, temp_db, tmp_path):
         dlg._start_import_process()
         worker = dlg.worker
         if worker:
-            worker.wait(5000)
+            for _ in range(100):
+                if not worker.isRunning():
+                    break
+                qapp.processEvents()
+                import time
+                time.sleep(0.02)
         qapp.processEvents()
 
     # Kiểm tra job trong database
     jobs = queue_repo.list_jobs()
     assert len(jobs) >= 1
     assert "Caption từ file Excel" in jobs[0]["snapshot_caption"]
+    dlg.close()
+
+

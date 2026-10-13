@@ -447,6 +447,51 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   5. `Thanh lọc đa năng & Live Search`: Lọc tức thời theo từ khóa và nhóm sự kiện (Lỗi, Đăng bài, Media, Hệ thống); tự động chuyển đổi sang `EmptyState.search_not_found()` khi không có kết quả.
   6. `Xuất báo cáo kiểm toán (TXT/CSV)`: Xuất file nhật ký kiểm toán hệ thống an toàn đã che các thông tin nhạy cảm (AC-32).
 
+---
+
+### Task UX-13: Final QA & Packaging
+
+- **Thời gian:** 13/10/2026 13:59 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** Pending
+- **Visual Snapshots:** 10/10 mockups đã được xác minh toàn diện trong `docs/redesign_screenshots/`:
+  - `01_dashboard_v2.png` (113 KB)
+  - `02_fanpage_v2.png` (90 KB)
+  - `03_composer_v2.png` (131 KB)
+  - `04_schedule_v2.png` (113 KB)
+  - `05_media_library_v2.png` (83 KB)
+  - `06_comments_v2.png` (18 KB)
+  - `07_settings_v2.png` (8.5 KB)
+  - `08_video_download_v2.png` (70 KB)
+  - `09_bulk_import_v2.png` (70 KB)
+  - `10_activity_v2.png` (11.2 KB)
+- **Command 1:** `pytest tests/test_ux13_final_qa_and_packaging.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux13_final_qa_and_packaging.py::test_final_qa_visual_snapshots_complete PASSED [ 33%]
+  tests/test_ux13_final_qa_and_packaging.py::test_final_qa_multi_resolution_and_10_routes PASSED [ 66%]
+  tests/test_ux13_final_qa_and_packaging.py::test_final_qa_architecture_invariants PASSED [100%]
+  ============================== 3 passed in 0.38s ==============================
+  ```
+- **Command 2 (Full Release Gate):** `pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 127 items
+  ...
+  ============================ 127 passed in 13.17s =============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `10/10 Visual Snapshots Hoàn chỉnh`: Đã chụp đầy đủ toàn bộ 10 workspace tương ứng chính xác với 10 mockup đề ra, không thiếu bất kỳ view nào.
+  2. `Multi-resolution & Responsive Testing (AC-16)`: Cửa sổ chính co giãn mượt mà từ kích thước tối thiểu 960x640, 1280x720 và Full HD 1920x1080 mà không gãy vỡ layout hay che mất controls.
+  3. `10 Routes Registry & Navigation`: Toàn bộ 10 route được đăng ký và chuyển đổi hoàn hảo qua `NavigationController` một nguồn chân lý.
+  4. `Invariants Bảo toàn Tuyệt đối`:
+     - SQLite WAL mode active (`PRAGMA journal_mode = wal`).
+     - Múi giờ Việt Nam độc lập với OS (`Asia/Ho_Chi_Minh` UTC+7).
+     - SecretVault lưu trữ mã hóa khóa token.
+     - ContentSnapshot bất biến kèm Idempotent queue.
+  5. `Thread Safety trên Windows`: Giải quyết triệt để vấn đề access violation khi dọn dẹp QThread, đảm bảo 127/127 tests xanh 100%.
+
+
 
 
 

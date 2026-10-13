@@ -169,3 +169,8 @@ class NavigationController(QObject):
 
     def get_widget(self, route: Route) -> Optional[QWidget]:
         return self._route_to_widget.get(route)
+
+    def navigate(self, route: Route) -> bool:
+        """Alias cho navigate_to."""
+        return self.navigate_to(route)
+
