@@ -250,3 +250,34 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   4. `Verify Token Health`: Nút kiểm tra sức khỏe token trực tiếp cập nhật trạng thái động của Page vào SQLite và UI mà không cần kết nối lại.
   5. `EmptyState Onboarding`: Tự động hiển thị thẻ EmptyState hướng dẫn kết nối khi chưa có Fanpage nào trong cơ sở dữ liệu.
   6. `Guard AC-11 Unlink Page`: Đảm bảo không silent delete; hiển thị chi tiết số lượng lịch hẹn giờ trên máy và lịch trên Facebook.
+
+---
+
+### Task UX-07: Unified Post Composer 2.0 (`post_composer.py`)
+
+- **Thời gian:** 13/10/2026 13:02 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** (đang chuẩn bị commit)
+- **Visual Snapshot:** `docs/redesign_screenshots/03_composer_v2.png` (131 KB, chuẩn thiết kế mockup `03_soan_bai.png`).
+- **Command 1:** `pytest tests/test_ux07_unified_composer.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux07_unified_composer.py::test_composer_live_mobile_preview PASSED [ 33%]
+  tests/test_ux07_unified_composer.py::test_composer_select_all_and_hashtag_tools PASSED [ 66%]
+  tests/test_ux07_unified_composer.py::test_composer_schedule_invariants_preserved PASSED [100%]
+  ============================== 3 passed in 0.94s ==============================
+  ```
+- **Command 2 (Full Gate):** `pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 107 items
+  ...
+  ============================ 107 passed in 10.27s =============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `Live Mobile Simulated Preview`: Khung xem trước mô phỏng chuẩn xác giao diện Facebook Reels trên di động, đồng bộ trực tiếp khi người dùng gõ caption, chọn Page đích hoặc gắn video.
+  2. `Multi-Page Selector Tools`: Nút chọn nhanh tất cả hoặc bỏ chọn tất cả Fanpage trong danh sách; hiển thị đúng số lượng Page trên nút hành động cuối.
+  3. `Caption Helpers`: Thanh công cụ gợi ý hashtag nhanh, bộ đếm số lượng ký tự và số lượng hashtag tức thời.
+  4. `Schedule Invariants (AC-06/AC-41)`: Kiểm tra công tắc hẹn giờ; khi tắt công tắc ngày giờ đã chọn vẫn được bảo toàn nguyên vẹn, không bao giờ tự động đăng bài khi chưa người dùng xác nhận.
+  5. `Idempotent ContentSnapshot (AC-15/AC-19)`: Đóng gói ContentSnapshot bất biến cho từng Page đích độc lập, chống bấm đúp với `client_request_id`.
+  6. `Thread Safety Enhancement`: Giải quyết triệt để xung đột bộ nhớ khi hủy dialog worker trong môi trường Windows.

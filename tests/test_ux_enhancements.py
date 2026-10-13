@@ -163,7 +163,6 @@ def test_bulk_import_dialog_export_and_process(qapp, temp_db, tmp_path):
         if dlg.worker:
             dlg.worker.wait(5000)
         qapp.processEvents()
-        dlg.close()
 
     # Kiểm tra job trong database
     jobs = queue_repo.list_jobs()

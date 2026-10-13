@@ -6,6 +6,7 @@ from src.lovira.ui.widgets.empty_state import EmptyState
 from src.lovira.ui.widgets.feedback import FeedbackBanner, InlineError, ToastNotification
 from src.lovira.ui.widgets.media_card import MediaThumbnailCard
 from src.lovira.ui.widgets.schedule_timeline import ScheduleTimelineWidget
+from src.lovira.ui.widgets.simulated_preview import SimulatedPostPreview
 from src.lovira.ui.widgets.status_chip import StatusChip
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "DateTimePickerVN",
     "MediaThumbnailCard",
     "ScheduleTimelineWidget",
+    "SimulatedPostPreview",
 ]

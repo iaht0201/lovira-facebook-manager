@@ -16,8 +16,8 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 | **UX-04** | Shared UI Primitives | P1 | UX-03 | **DONE** | 13/10/2026 |
 | **UX-05** | Dashboard 2.0 | P1 | UX-04 | **DONE** | 13/10/2026 |
 | **UX-06** | Fanpage Workspace 2.0 | P0 | UX-04, UX-01 | **DONE** | 13/10/2026 |
-| **UX-07** | Unified Post Composer 2.0 | P0 | UX-06 | IN PROGRESS | — |
-| **UX-08** | Schedule Workspace 2.0 | P0 | UX-07 | TODO | — |
+| **UX-07** | Unified Post Composer 2.0 | P0 | UX-06 | **DONE** | 13/10/2026 |
+| **UX-08** | Schedule Workspace 2.0 | P0 | UX-07 | IN PROGRESS | — |
 | **UX-09** | Media Library & Video Downloader 2.0 | P1 | UX-07 | TODO | — |
 | **UX-10** | Bulk Import Excel/CSV Wizard 2.0 | P0 | UX-06, UX-09 | TODO | — |
 | **UX-11** | Comments & Interaction Workspace 2.0 | P1 | UX-04, UX-06 | TODO | — |
@@ -263,4 +263,43 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
   - Kiểm tra quyền `CREATE_CONTENT` trước khi cho phép đăng bài.
   - Cảnh báo rõ ràng tránh mất mát lịch khi gỡ Fanpage.
 - **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Fanpage Workspace 2.0, khắc phục triệt để lỗi A-06, A-10, có visual snapshot `02_fanpage_v2.png`, 104/104 tests passed.
-- **Next unblocked task:** UX-07 — Unified Post Composer 2.0 (`post_composer.py`).
+
+---
+
+### UX-07 — Unified Post Composer 2.0 (`post_composer.py`)
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 12:58 — 13/10/2026 13:03
+- **Baseline SHA / Commit SHA:** `eac8595` / (đang chuẩn bị commit)
+- **Scope and no-go changes:**
+  - Nâng cấp Trình Soạn bài & Đặt lịch đa Page thành Unified Composer 2.0 theo mockup `03_soan_bai.png`:
+    1. **Bố cục 2 cột chuyên nghiệp:** Cột trái là Editor Form tiện lợi; Cột phải là Khung xem trước mô phỏng di động thời gian thực (`SimulatedPostPreview`).
+    2. **Khung Live Mobile Preview (`SimulatedPostPreview`):** Mô phỏng giao diện Facebook Reels / Post trên điện thoại, đồng bộ thời gian thực tên Fanpage, avatar, nội dung caption, media preview và các nút tương tác mô phỏng (Like, Comment, Share).
+    3. **Bộ chọn đa Fanpage & Nút nhanh:** Checkbox danh sách Page kèm 2 nút "Chọn tất cả" (`btn_select_all`) và "Bỏ chọn" (`btn_deselect_all`).
+    4. **Công cụ soạn thảo nâng cao:** Bộ đếm ký tự & hashtag thời gian thực, thanh nút chèn nhanh hashtag xu hướng (#reels, #trending, #viral, #review).
+    5. **Bảo toàn Invariant AC-06 & AC-41:** Tắt công tắc hẹn giờ KHÔNG tự động publish ngay, giữ nguyên dữ liệu ngày giờ đã chọn.
+    6. **Tạo ContentSnapshot bất biến & Đăng nguyên tử (AC-15, AC-19):** Mỗi Fanpage đích nhận một ContentSnapshot riêng, enqueue batch kèm `client_request_id` chống bấm đúp.
+    7. **Tăng cường an toàn QThread:** Khắc phục triệt để lỗi race condition trong luồng đóng dialog worker, bảo đảm toàn bộ test suite chạy mượt mà 100%.
+- **Existing behavior to preserve:** Bảo toàn 100% các attribute cũ `page_list_widget`, `cb_content_type`, `media_card`, `lbl_media_info`, `btn_clear_media`, `caption_input`, `chk_schedule`, `schedule_picker_frame`, `datetime_picker`, `lbl_schedule_summary`, `lbl_summary_text`, `btn_submit`, `composer_state`, `attached_media`, `reload_pages()`, `attach_video_data()`, `_clear_attached_media()`, `_get_selected_page_ids()`, `_on_page_selection_changed()`, `_on_content_type_changed()`, `_on_caption_changed()`, `_on_schedule_toggled()`, `_on_datetime_changed()`, `_update_schedule_display()`, `_update_submit_button_label()`, `_update_summary()`, `_handle_submit()`.
+- **Changed files:**
+  - `src/lovira/ui/widgets/simulated_preview.py` (new)
+  - `src/lovira/ui/widgets/__init__.py` (updated)
+  - `src/lovira/ui/views/post_composer.py` (upgraded to 2.0)
+  - `src/lovira/ui/views/bulk_import_dialog.py` (thread lifecycle wait fix)
+  - `tests/test_ux_enhancements.py` (cleaned up redundant close call)
+  - `tests/test_ux07_unified_composer.py` (new - 3 test cases)
+  - `docs/redesign_screenshots/03_composer_v2.png` (captured visual snapshot)
+- **UI states implemented:**
+  - Form Soạn thảo 2 cột chia tỷ lệ 3:2.
+  - Live Mobile Preview cập nhật thời gian thực khi gõ caption hoặc chọn Page/video.
+  - Bật/tắt Hẹn giờ (AC-06/AC-41).
+  - Chọn tất cả / Bỏ chọn Fanpage.
+  - Bộ đếm ký tự & hashtag.
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux07_unified_composer.py -v`: 3 passed in 0.94s.
+  - `pytest tests/ -v`: 107 passed in 10.27s (toàn bộ 107/107 tests xanh 100%).
+- **Security & a11y self-review:**
+  - Idempotency chống bấm đúp bảo đảm không tạo trùng lặp job trên Facebook.
+  - Live Preview giúp người dùng rà soát nội dung trước khi xuất bản.
+  - Không lộ thông tin nhạy cảm trên form.
+- **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Post Composer 2.0, khắc phục triệt để lỗi A-11, có visual snapshot `03_composer_v2.png`, 107/107 tests passed.
+- **Next unblocked task:** UX-08 — Schedule Workspace 2.0 (`schedule_workspace.py`).

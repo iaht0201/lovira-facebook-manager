@@ -1,12 +1,12 @@
 """
-Lovira-Facebook Manager
-Màn hình Soạn bài & Đặt lịch Đa Fanpage (PostComposerView)
-- Đăng bài, Reels và đặt lịch lên nhiều Page đồng thời (BR-04, BR-06, AC-05)
-- Ghi đè caption riêng từng Page hoặc dùng caption chung (Section 7.1)
-- Bộ chọn thời gian Việt Nam (Asia/Ho_Chi_Minh — UTC+7) (AC-07)
-- Bật/tắt công tắc hẹn giờ KHÔNG tự động đăng bài, bảo lưu giờ đã chọn (AC-06, AC-41)
-- Nút cuối đổi nhãn động ghi rõ số Page đích và phương thức (Section 4.3)
-- Tạo bản chụp ContentSnapshot bất biến và hàng đợi nguyên tử chống bấm đúp (AC-15, AC-19)
+Lovira Workspace 2.0 — Post Composer Workspace (post_composer.py)
+Giao diện Soạn bài, Facebook Reels và Đặt lịch đa Fanpage 2.0 (Mockup 03_soan_bai.png):
+- Thiết kế bố cục 2 cột: Cột Soạn thảo nâng cao & Khung Live Preview di động thời gian thực
+- Hỗ trợ đăng đồng thời đa Page kèm bộ chọn nhanh (Select All / Deselect All)
+- Tích hợp SimulatedPostPreview hiển thị trực quan Reels/Post trên điện thoại
+- Bộ đếm ký tự, đếm hashtag và thanh công cụ chèn hashtag nhanh
+- Hẹn giờ chuẩn hóa theo múi giờ Việt Nam (UTC+7), bảo lưu giờ khi bật/tắt (AC-06, AC-41)
+- Tạo ContentSnapshot bất biến và hàng đợi nguyên tử chống bấm đúp (AC-15, AC-19)
 """
 
 import logging
@@ -41,12 +41,14 @@ from src.lovira.domain.composer import (
 )
 from src.lovira.storage.page_repository import PageRepository
 from src.lovira.storage.queue_repository import PublishQueueRepository
+from src.lovira.ui.design.icons import get_icon
+from src.lovira.ui.widgets.simulated_preview import SimulatedPostPreview
 
 logger = logging.getLogger(__name__)
 
 
 class PostComposerView(QWidget):
-    """Giao diện Soạn bài, Facebook Reels và Đặt lịch đa Page."""
+    """Giao diện Soạn bài, Facebook Reels và Đặt lịch đa Page 2.0."""
 
     publish_enqueued = Signal(list)  # Phát danh sách job_id khi đã lưu hàng đợi thành công
 
@@ -69,34 +71,58 @@ class PostComposerView(QWidget):
         self._update_submit_button_label()
 
     def _init_ui(self) -> None:
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(20, 18, 20, 20)
+        main_layout.setSpacing(18)
 
+        # CỘT TRÁI: Form Soạn thảo (Scrollable)
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
 
         container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setSpacing(16)
+        form_layout = QVBoxLayout(container)
+        form_layout.setContentsMargins(0, 0, 8, 0)
+        form_layout.setSpacing(16)
 
-        # 1. Chọn Fanpage đích (Hỗ trợ chọn nhiều Page)
-        page_box = QGroupBox("1. Chọn Fanpage đích (BR-04, BR-06)")
+        # 1. Chọn Fanpage đích
+        page_box = QGroupBox("1. Chọn Fanpage đích (Đăng đồng thời đa Page)")
         page_layout = QVBoxLayout(page_box)
+        page_layout.setSpacing(10)
+
+        # Header hàng nút chọn nhanh
+        btn_bar = QHBoxLayout()
+        btn_bar.setSpacing(8)
+        lbl_hint = QLabel("Tích chọn các Fanpage bạn muốn xuất bản bài viết:")
+        lbl_hint.setStyleSheet("font-size: 11px; color: #94A3B8;")
+        btn_bar.addWidget(lbl_hint)
+        btn_bar.addStretch()
+
+        self.btn_select_all = QPushButton("Chọn tất cả")
+        self.btn_select_all.setStyleSheet("font-size: 11px; padding: 3px 8px;")
+        self.btn_select_all.clicked.connect(self._select_all_pages)
+        btn_bar.addWidget(self.btn_select_all)
+
+        self.btn_deselect_all = QPushButton("Bỏ chọn")
+        self.btn_deselect_all.setStyleSheet("font-size: 11px; padding: 3px 8px;")
+        self.btn_deselect_all.clicked.connect(self._deselect_all_pages)
+        btn_bar.addWidget(self.btn_deselect_all)
+        page_layout.addLayout(btn_bar)
 
         self.page_list_widget = QListWidget()
         self.page_list_widget.setMaximumHeight(140)
         self.page_list_widget.itemChanged.connect(self._on_page_selection_changed)
         page_layout.addWidget(self.page_list_widget)
 
-        layout.addWidget(page_box)
+        form_layout.addWidget(page_box)
 
         # 2. Loại nội dung & Media đính kèm
         content_box = QGroupBox("2. Định dạng nội dung & Media")
         content_layout = QVBoxLayout(content_box)
+        content_layout.setSpacing(10)
 
         type_row = QHBoxLayout()
-        type_row.addWidget(QLabel("Loại bài viết:"))
+        type_row.addWidget(QLabel("Định dạng xuất bản:"))
         self.cb_content_type = QComboBox()
         self.cb_content_type.addItems(["Reels", "Video", "Chữ (Text)", "Hình ảnh"])
         self.cb_content_type.currentTextChanged.connect(self._on_content_type_changed)
@@ -108,37 +134,80 @@ class PostComposerView(QWidget):
         self.media_card = QFrame()
         self.media_card.setObjectName("cardFrame")
         media_card_layout = QHBoxLayout(self.media_card)
+        media_card_layout.setContentsMargins(12, 10, 12, 10)
+
+        self.lbl_media_icon = QLabel()
+        self.lbl_media_icon.setPixmap(get_icon("video", "#6258E8", 20).pixmap(20, 20))
+        media_card_layout.addWidget(self.lbl_media_icon)
+
         self.lbl_media_info = QLabel("Chưa có media nào được đính kèm.")
-        self.lbl_media_info.setStyleSheet("color: #94A3B8;")
+        self.lbl_media_info.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        media_card_layout.addWidget(self.lbl_media_info, stretch=1)
+
         self.btn_clear_media = QPushButton("Gỡ media")
+        self.btn_clear_media.setStyleSheet("background: transparent; border: 1px solid #F0707B; color: #F0707B; border-radius: 4px; padding: 3px 8px; font-size: 11px;")
         self.btn_clear_media.setVisible(False)
         self.btn_clear_media.clicked.connect(self._clear_attached_media)
-
-        media_card_layout.addWidget(self.lbl_media_info)
-        media_card_layout.addStretch()
         media_card_layout.addWidget(self.btn_clear_media)
+
         content_layout.addWidget(self.media_card)
+        form_layout.addWidget(content_box)
 
-        layout.addWidget(content_box)
-
-        # 3. Soạn Caption (Chung và Ghi đè)
-        caption_box = QGroupBox("3. Nội dung Caption")
+        # 3. Soạn Caption (Nội dung bài viết)
+        caption_box = QGroupBox("3. Nội dung bài viết / Caption Reels")
         caption_layout = QVBoxLayout(caption_box)
+        caption_layout.setSpacing(8)
 
-        caption_layout.addWidget(QLabel("Caption chung cho tất cả các Page:"))
+        # Thanh công cụ chèn hashtag nhanh
+        tools_row = QHBoxLayout()
+        tools_row.setSpacing(6)
+        lbl_quick_tag = QLabel("Gợi ý hashtag:")
+        lbl_quick_tag.setStyleSheet("font-size: 11px; color: #64748B;")
+        tools_row.addWidget(lbl_quick_tag)
+
+        sample_tags = ["#reels", "#trending", "#viral", "#review", "#fbtools"]
+        for tag in sample_tags:
+            btn_tag = QPushButton(tag)
+            btn_tag.setStyleSheet("""
+                QPushButton {
+                    background-color: #1E2A44;
+                    color: #6258E8;
+                    border: 1px solid #2B3A5A;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: #273656;
+                    border-color: #6258E8;
+                }
+            """)
+            btn_tag.clicked.connect(lambda _, t=tag: self._append_hashtag(t))
+            tools_row.addWidget(btn_tag)
+
+        tools_row.addStretch()
+        caption_layout.addLayout(tools_row)
+
         self.caption_input = QTextEdit()
-        self.caption_input.setPlaceholderText("Nhập nội dung bài viết / caption Facebook Reels...")
-        self.caption_input.setMinimumHeight(100)
+        self.caption_input.setPlaceholderText("Nhập nội dung bài viết, tiêu đề Reels, hashtag xu hướng...")
+        self.caption_input.setMinimumHeight(110)
         self.caption_input.textChanged.connect(self._on_caption_changed)
         caption_layout.addWidget(self.caption_input)
 
-        layout.addWidget(caption_box)
+        # Bộ đếm ký tự & hashtag
+        self.lbl_char_count = QLabel("0 ký tự | 0 hashtag")
+        self.lbl_char_count.setStyleSheet("font-size: 11px; color: #64748B; text-align: right;")
+        self.lbl_char_count.setAlignment(Qt.AlignmentFlag.AlignRight)
+        caption_layout.addWidget(self.lbl_char_count)
 
-        # 4. Hẹn giờ theo giờ Việt Nam (UTC+7)
-        schedule_box = QGroupBox("4. Thời gian đăng bài (Giờ Việt Nam — UTC+7)")
+        form_layout.addWidget(caption_box)
+
+        # 4. Hẹn giờ theo múi giờ Việt Nam (UTC+7)
+        schedule_box = QGroupBox("4. Thời gian đăng bài (Múi giờ Việt Nam — UTC+7)")
         schedule_layout = QVBoxLayout(schedule_box)
+        schedule_layout.setSpacing(10)
 
-        self.chk_schedule = QCheckBox("Bật hẹn giờ đăng bài (Asia/Ho_Chi_Minh — UTC+7)")
+        self.chk_schedule = QCheckBox("Bật hẹn giờ tự động (Hệ thống sẽ chạy đăng nền trên máy)")
         self.chk_schedule.setChecked(False)
         self.chk_schedule.toggled.connect(self._on_schedule_toggled)
         schedule_layout.addWidget(self.chk_schedule)
@@ -146,11 +215,13 @@ class PostComposerView(QWidget):
         # Vùng chọn ngày giờ
         self.schedule_picker_frame = QFrame()
         picker_layout = QHBoxLayout(self.schedule_picker_frame)
-        picker_layout.setContentsMargins(0, 8, 0, 0)
+        picker_layout.setContentsMargins(0, 4, 0, 0)
+        picker_layout.setSpacing(10)
 
-        picker_layout.addWidget(QLabel("Thời điểm đăng:"))
+        picker_layout.addWidget(QLabel("Thời điểm:"))
         self.datetime_picker = QDateTimeEdit()
-        self.datetime_picker.setDisplayFormat("dd/MM/yyyy HH:mm")
+        self.datetime_picker.setDisplayFormat("dd/MM/yyyy  HH:mm")
+        self.datetime_picker.setCalendarPopup(True)
 
         # Khởi tạo mặc định: Giờ Việt Nam hiện tại + 1 tiếng
         init_time = vn_now() + timedelta(hours=1)
@@ -161,19 +232,20 @@ class PostComposerView(QWidget):
         picker_layout.addWidget(self.datetime_picker)
 
         self.lbl_schedule_summary = QLabel()
-        self.lbl_schedule_summary.setStyleSheet("color: #38BDF8; font-weight: 500;")
+        self.lbl_schedule_summary.setStyleSheet("color: #24C89A; font-weight: 600; font-size: 12px;")
         picker_layout.addWidget(self.lbl_schedule_summary)
         picker_layout.addStretch()
 
         self.schedule_picker_frame.setVisible(False)
         schedule_layout.addWidget(self.schedule_picker_frame)
+        form_layout.addWidget(schedule_box)
 
-        layout.addWidget(schedule_box)
-
-        # 5. Bảng Tóm tắt Xác nhận & Nút Thực hiện (Section 4.3)
+        # 5. Khung Tóm tắt & Nút Thực hiện xuất bản
         summary_frame = QFrame()
         summary_frame.setObjectName("cardFrame")
         summary_layout = QVBoxLayout(summary_frame)
+        summary_layout.setContentsMargins(16, 14, 16, 14)
+        summary_layout.setSpacing(10)
 
         self.lbl_summary_text = QLabel("Tóm tắt: Đang chuẩn bị bài viết...")
         self.lbl_summary_text.setStyleSheet("color: #F8FAFC; font-size: 13px; font-weight: 600;")
@@ -182,16 +254,21 @@ class PostComposerView(QWidget):
         action_row = QHBoxLayout()
         action_row.addStretch()
 
-        self.btn_submit = QPushButton("Đăng ngay lên 0 Page")
+        self.btn_submit = QPushButton("🚀 Đăng ngay lên 0 Page")
         self.btn_submit.setObjectName("primaryButton")
+        self.btn_submit.setStyleSheet("font-size: 14px; font-weight: 700; padding: 10px 24px;")
         self.btn_submit.clicked.connect(self._handle_submit)
         action_row.addWidget(self.btn_submit)
 
         summary_layout.addLayout(action_row)
-        layout.addWidget(summary_frame)
+        form_layout.addWidget(summary_frame)
 
         scroll_area.setWidget(container)
-        main_layout.addWidget(scroll_area)
+        main_layout.addWidget(scroll_area, stretch=3)
+
+        # CỘT PHẢI: Khung Live Simulated Preview
+        self.preview_widget = SimulatedPostPreview(self)
+        main_layout.addWidget(self.preview_widget, stretch=2)
 
         self._update_schedule_display()
 
@@ -205,27 +282,46 @@ class PostComposerView(QWidget):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
             self.page_list_widget.addItem(item)
+        self._update_live_preview()
+
+    def _select_all_pages(self) -> None:
+        for i in range(self.page_list_widget.count()):
+            self.page_list_widget.item(i).setCheckState(Qt.CheckState.Checked)
+
+    def _deselect_all_pages(self) -> None:
+        for i in range(self.page_list_widget.count()):
+            self.page_list_widget.item(i).setCheckState(Qt.CheckState.Unchecked)
+
+    def _append_hashtag(self, tag: str) -> None:
+        current = self.caption_input.toPlainText()
+        if current and not current.endswith(" ") and not current.endswith("\n"):
+            current += " "
+        self.caption_input.setPlainText(current + tag + " ")
+        self.caption_input.moveCursor(self.caption_input.textCursor().MoveOperation.End)
 
     def attach_video_data(self, media_data: Dict[str, Any]) -> None:
         """Tiếp nhận dữ liệu video từ tab Tải video hoặc Thư viện (1-click flow)."""
         self.attached_media = media_data
-        file_name = media_data.get("file_path", "").split("/")[-1].split("\\")[-1]
+        file_path = media_data.get("file_path", "")
+        file_name = file_path.split("/")[-1].split("\\")[-1]
         self.lbl_media_info.setText(f"🎬 Video: {file_name} (ID: {media_data.get('media_id')})")
         self.btn_clear_media.setVisible(True)
 
-        # Tự động gợi ý caption nếu có tiêu đề
+        # Gợi ý caption nếu có tiêu đề video
         if media_data.get("title") and not self.caption_input.toPlainText():
             self.caption_input.setPlainText(media_data["title"])
 
         # Mặc định chọn Reels
         self.cb_content_type.setCurrentText("Reels")
         self._update_summary()
+        self._update_live_preview()
 
     def _clear_attached_media(self) -> None:
         self.attached_media = None
         self.lbl_media_info.setText("Chưa có media nào được đính kèm.")
         self.btn_clear_media.setVisible(False)
         self._update_summary()
+        self._update_live_preview()
 
     def _get_selected_page_ids(self) -> List[str]:
         selected = []
@@ -238,6 +334,7 @@ class PostComposerView(QWidget):
     def _on_page_selection_changed(self, _) -> None:
         self._update_submit_button_label()
         self._update_summary()
+        self._update_live_preview()
 
     def _on_content_type_changed(self, text: str) -> None:
         type_map = {
@@ -248,10 +345,19 @@ class PostComposerView(QWidget):
         }
         self.composer_state.content_type = type_map.get(text, ContentType.REELS)
         self._update_summary()
+        self._update_live_preview()
 
     def _on_caption_changed(self) -> None:
-        self.composer_state.common_caption = self.caption_input.toPlainText()
+        caption = self.caption_input.toPlainText()
+        self.composer_state.common_caption = caption
+
+        # Đếm ký tự và hashtag
+        words = caption.split()
+        hashtags = [w for w in words if w.startswith("#") and len(w) > 1]
+        self.lbl_char_count.setText(f"{len(caption)} ký tự | {len(hashtags)} hashtags")
+
         self._update_summary()
+        self._update_live_preview()
 
     def _on_schedule_toggled(self, checked: bool) -> None:
         """
@@ -294,6 +400,26 @@ class PostComposerView(QWidget):
         media_str = "Có video gắn kèm" if self.attached_media else "Không có file đính kèm"
         self.lbl_summary_text.setText(
             f"Tóm tắt: Đăng {c_type} lên {len(pages)} Fanpage ({mode_str}) — {media_str}."
+        )
+
+    def _update_live_preview(self) -> None:
+        """Đồng bộ hóa dữ liệu thời gian thực sang cột Preview di động."""
+        pages = self._get_selected_page_ids()
+        page_name = ""
+        if pages:
+            p_obj = self.page_repo.get_page(pages[0])
+            if p_obj:
+                page_name = p_obj.get("name", "")
+
+        caption = self.caption_input.toPlainText()
+        media_path = self.attached_media.get("file_path") if self.attached_media else None
+        c_type = self.cb_content_type.currentText()
+
+        self.preview_widget.update_preview(
+            page_name=page_name,
+            caption=caption,
+            media_path=media_path,
+            content_type=c_type,
         )
 
     def _handle_submit(self) -> None:
