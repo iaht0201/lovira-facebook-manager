@@ -415,6 +415,39 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   5. `Mẫu câu phản hồi nhanh & TemplateManagerDialog`: Cho phép lựa chọn mẫu câu tự động đưa vào khung soạn thảo hoặc mở dialog quản lý mẫu câu (thêm/xóa) thông qua `ReplyTemplateRepository`.
   6. `Thao tác an toàn`: Hỗ trợ Ẩn/Bỏ ẩn bình luận và Xóa bình luận khỏi bộ nhớ đệm SQLite có xác nhận.
 
+---
+
+### Task UX-12: Settings 2.0 & Activity Log 2.0 (`settings_workspace.py`, `activity_workspace.py`)
+
+- **Thời gian:** 13/10/2026 13:51 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** Pending
+- **Visual Snapshots:**
+  - `docs/redesign_screenshots/07_settings_v2.png` (8.5 KB, chuẩn thiết kế mockup `07_cai_dat.png`).
+  - `docs/redesign_screenshots/10_activity_v2.png` (11.2 KB, chuẩn thiết kế mockup `10_nhat_ky.png`).
+- **Command 1:** `pytest tests/test_ux12_settings_and_activity.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux12_settings_and_activity.py::test_settings_workspace_sections_and_features PASSED [ 50%]
+  tests/test_ux12_settings_and_activity.py::test_activity_workspace_table_and_filtering PASSED [100%]
+  ============================== 2 passed in 0.38s ==============================
+  ```
+- **Command 2 (Full Gate):** `python -m pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 124 items
+  ...
+  ============================ 124 passed in 12.61s =============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `Cấu trúc 6 Nhóm Card Settings (A-13)`: Giao diện & Trải nghiệm, Cấu hình Đăng bài, Media & Lưu trữ, Sao lưu & Phục hồi (AC-22), Bản quyền & Thiết bị (BR-11, A-17), Chẩn đoán hệ thống.
+  2. `Tương tác trực tiếp Theme & Clipboard`: Chuyển đổi Dark/Light mode thời gian thực; 1-click sao chép Device ID vào bộ nhớ tạm không để lộ thông tin nhạy cảm.
+  3. `Sao lưu SQLite Online Backup an toàn (AC-22)`: Tạo bản sao lưu cơ sở dữ liệu nguyên tử trong chế độ WAL mà không làm gián đoạn các luồng ghi.
+  4. `Bảng Nhật ký kiểm toán 5 cột`: Thời gian (Giờ VN UTC+7), Mức độ (Tag màu phân biệt THÀNH CÔNG, THÔNG TIN, CẢNH BÁO, LỖI), Phân hệ, Đối tượng / Mã ID, Chi tiết hoạt động.
+  5. `Thanh lọc đa năng & Live Search`: Lọc tức thời theo từ khóa và nhóm sự kiện (Lỗi, Đăng bài, Media, Hệ thống); tự động chuyển đổi sang `EmptyState.search_not_found()` khi không có kết quả.
+  6. `Xuất báo cáo kiểm toán (TXT/CSV)`: Xuất file nhật ký kiểm toán hệ thống an toàn đã che các thông tin nhạy cảm (AC-32).
+
+
 
 
 

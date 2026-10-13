@@ -482,7 +482,53 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
   - Không để lộ thông tin nhạy cảm của khách hàng; dữ liệu được quản lý cục bộ an toàn.
   - Banner cảnh báo minh bạch giúp người dùng hiểu rõ giới hạn quyền Graph API.
 - **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Comments Workspace 2.0, khắc phục triệt để lỗi A-01, có visual snapshot `06_comments_v2.png`, 122/122 tests passed.
-- **Next unblocked task:** UX-12 — Settings 2.0 & Activity Log 2.0 (`settings_workspace.py`, `activity_workspace.py`).
+
+---
+
+### UX-12 — Settings 2.0 & Activity Log 2.0 (`settings_workspace.py`, `activity_workspace.py`)
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 13:46 — 13/10/2026 13:51
+- **Baseline SHA / Commit SHA:** `20a5c54` / Pending
+- **Scope and no-go changes:**
+  - Nâng cấp Màn hình Cài đặt & Nhật ký kiểm toán 2.0 bám sát 2 Mockups `07_cai_dat.png` & `10_nhat_ky.png`:
+    1. **Settings Workspace 2.0 (`SettingsWorkspaceView` — Khắc phục A-13, A-17):**
+       - Phân nhóm 6 Card sections trực quan trong ScrollArea:
+         - (1) Giao diện & Trải nghiệm: Tùy chọn Dark/Light mode kết nối trực tiếp `ThemeManager`, ghim múi giờ Việt Nam `Asia/Ho_Chi_Minh` (UTC+7), bật/tắt thu nhỏ tray khi bấm đóng `[X]` (AC-08).
+         - (2) Cấu hình Đăng bài: Khoảng cách an toàn giữa 2 bài (SpinBox 5-120 phút), tự động đối chiếu Facebook khi khởi động (AC-14).
+         - (3) Media & Lưu trữ: Đường dẫn thư mục tải video kèm nút thay đổi, nút dọn dẹp cache tạm thời.
+         - (4) Sao lưu & Phục hồi dữ liệu (AC-22): SQLite Online Backup API an toàn trong WAL mode và Phục hồi từ tệp `.db`.
+         - (5) Bản quyền & Thiết bị (AC-23, BR-11, A-17): Badge trạng thái bản quyền (PRO / FREE), Device ID rút gọn có nút Copy to clipboard, nút mở `LicenseDialog`.
+         - (6) Chẩn đoán & Toàn vẹn hệ thống: Phiên bản app 2.0, SQLite WAL active, Python runtime.
+    2. **Activity Workspace 2.0 (`ActivityWorkspaceView` — Mockup `10_nhat_ky.png`):**
+       - Bảng kiểm toán 5 cột chuẩn: `Thời gian (Giờ VN)`, `Mức độ` (Badge Tag màu: THÀNH CÔNG xanh lá, THÔNG TIN xanh lam, CẢNH BÁO vàng, LỖI đỏ), `Phân hệ`, `Đối tượng / Mã ID`, `Chi tiết hoạt động`.
+       - Thanh lọc đa tiêu chí: Live Search `search_filter` tức thời + Combobox `combo_filter` (Tất cả, Lỗi & Cảnh báo, Đăng bài, Media, Hệ thống).
+       - Chuyển đổi mượt mà sang `EmptyState.search_not_found()` khi tìm kiếm không ra kết quả.
+       - Tích hợp xuất nhật ký hoạt động kiểm toán ra file định dạng TXT / CSV.
+       - Truy vấn dữ liệu từ bảng `job_events` trong SQLite WAL kết hợp nhật ký hệ thống an toàn, tự động che thông tin nhạy cảm (AC-32).
+- **Existing behavior to preserve:** Bảo toàn 100% các attribute cũ `db`, `license`, `btn_backup`, `_handle_backup()`, `combo_filter`, `btn_export`, `table`, `reload_activities()`, `_export_logs()`.
+- **Changed files:**
+  - `src/lovira/ui/views/settings_workspace.py` (upgraded to 2.0)
+  - `src/lovira/ui/views/activity_workspace.py` (upgraded to 2.0)
+  - `tests/test_ux12_settings_and_activity.py` (new - 2 test cases)
+  - `scripts/capture_settings_and_activity_v2.py` (new - snapshot utility)
+  - `docs/redesign_screenshots/07_settings_v2.png` (captured visual snapshot)
+  - `docs/redesign_screenshots/10_activity_v2.png` (captured visual snapshot)
+- **UI states implemented:**
+  - Settings 6 Card sections cuộn mượt mà.
+  - Chuyển đổi Dark/Light theme trực tiếp.
+  - Sao chép Device ID và sao lưu DB SQLite AC-22.
+  - Bảng Activity 5 cột, badge mức độ màu sắc, lọc phân hệ, live search.
+  - EmptyState khi tìm kiếm không ra kết quả.
+  - Xuất file nhật ký kiểm toán.
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux12_settings_and_activity.py -v`: 2 passed in 0.38s.
+  - `python -m pytest tests/ -v`: 124 passed in 12.61s (toàn bộ 124/124 tests xanh 100%).
+- **Security & a11y self-review:**
+  - Không để lộ token hay secret thô trong giao diện hay file xuất nhật ký (AC-32).
+  - Sao lưu database online backup bảo toàn toàn vẹn cơ sở dữ liệu SQLite ngay cả khi đang ghi WAL (AC-22).
+- **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Settings 2.0 & Activity Log 2.0, khắc phục triệt để lỗi A-13, A-17, có 2 visual snapshots `07_settings_v2.png` và `10_activity_v2.png`, 124/124 tests passed.
+- **Next unblocked task:** UX-13 — Final QA & Packaging.
+
 
 
 
