@@ -248,3 +248,86 @@ def test_video_workspace_route_tab_switching(qapp, temp_db, tmp_path):
     # Chuyển lại Tải video
     workspace.show_download_tab()
     assert workspace.tab_widget.currentIndex() == 0
+
+
+def test_download_tab_batch_schedule_and_fanpage_selection(qapp, temp_db, tmp_path):
+    """Kiểm tra chọn fanpage đích, tự động lấy title & hashtag và lên lịch đăng hàng loạt."""
+    from src.lovira.security.vault import SecretVault
+    from src.lovira.storage.page_repository import PageRepository
+    from src.lovira.storage.queue_repository import PublishQueueRepository
+    from src.lovira.ui.views.video_workspace import BatchComposeDialog, DownloadTask
+
+    vault = SecretVault(fallback_vault_dir=tmp_path / "vault")
+    page_repo = PageRepository(temp_db, vault)
+    queue_repo = PublishQueueRepository(temp_db)
+
+    # 1. Tạo 2 page trong DB
+    p1 = page_repo.upsert_page(facebook_page_id="111222333", name="Fanpage Thú Cưng", status="ready")
+    p2 = page_repo.upsert_page(facebook_page_id="444555666", name="Fanpage Đời Sống", status="ready")
+
+    downloader = VideoDownloader()
+    media_repo = MediaRepository(temp_db)
+    media_processor = MediaProcessor()
+
+    tab = VideoDownloadTab(
+        downloader=downloader,
+        media_repo=media_repo,
+        media_processor=media_processor,
+        download_dir=tmp_path,
+        page_repo=page_repo,
+        queue_repo=queue_repo,
+    )
+
+    # 2. Thêm video đã hoàn tất có title & hashtag
+    vid_file = tmp_path / "dog_video.mp4"
+    vid_file.write_bytes(b"dog video dummy data")
+    t = DownloadTask(
+        task_id="task_dog_01",
+        source_url="https://tiktok.com/@user/dog",
+        normalized_url="https://tiktok.com/@user/dog",
+        source_platform="tiktok",
+        title="#dachshund #cholapxuong #fyp #thucung",
+        state="COMPLETED",
+        local_file_path=str(vid_file),
+        media_id="media_dog_01",
+    )
+    tab.model.add_task(t)
+
+    # 3. Chọn tất cả video đã tải
+    tab._select_all_completed()
+    selected = tab.model.get_selected_completed_tasks()
+    assert len(selected) == 1
+    assert selected[0].task_id == "task_dog_01"
+
+    # 4. Kiểm tra BatchComposeDialog
+    fanpages = page_repo.list_pages()
+    media_items = [{
+        "id": t.media_id,
+        "title": t.title,
+        "caption": t.title,
+        "local_path": t.local_file_path,
+        "thumbnail_path": "",
+        "duration": 15.0,
+    }]
+
+    dlg = BatchComposeDialog(
+        media_items=media_items,
+        fanpages=fanpages,
+        initial_selected_page_ids=[p1],
+        initial_mode="schedule",
+    )
+
+    # Kiểm tra tự động lấy title & hashtag của video
+    assert "#dachshund #cholapxuong" in dlg.caption_edit.toPlainText()
+    assert p1 in dlg.selected_page_ids
+    assert dlg.table_preview.rowCount() >= 1
+
+    # Kiểm tra xác nhận đặt lịch
+    confirm_payload = []
+    dlg.batch_confirmed.connect(lambda p: confirm_payload.append(p))
+    dlg._on_confirm_clicked()
+
+    assert len(confirm_payload) == 1
+    payload = confirm_payload[0]
+    assert len(payload["fanpages"]) >= 1
+    assert payload["use_original_titles"] is True

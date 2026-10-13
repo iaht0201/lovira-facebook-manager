@@ -1156,6 +1156,27 @@ class VideoDownloadTab(QWidget):
         self.btn_download_all.clicked.connect(self._start_download_all)
         ctrl_row.addWidget(self.btn_download_all)
 
+        self.btn_select_completed_quick = QPushButton("☑ Chọn video đã tải")
+        self.btn_select_completed_quick.setFixedHeight(32)
+        self.btn_select_completed_quick.setStyleSheet("""
+            QPushButton {
+                background-color: #17243B;
+                border: 1px solid #2B3D59;
+                border-radius: 6px;
+                color: #CBD5E1;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 10px;
+            }
+            QPushButton:hover {
+                background-color: #24354F;
+                color: #FFFFFF;
+                border-color: #6258E8;
+            }
+        """)
+        self.btn_select_completed_quick.clicked.connect(self._select_all_completed)
+        ctrl_row.addWidget(self.btn_select_completed_quick)
+
         self.btn_clear_queue = QPushButton("✕ Xóa danh sách")
         self.btn_clear_queue.setFixedHeight(32)
         self.btn_clear_queue.setStyleSheet("""
@@ -1223,6 +1244,27 @@ class VideoDownloadTab(QWidget):
         self.lbl_selected_summary = QLabel("☑ 0 video hoàn tất được chọn")
         self.lbl_selected_summary.setStyleSheet("font-size: 12px; font-weight: 700; color: #F1F5F9;")
         bottom_layout.addWidget(self.lbl_selected_summary)
+
+        self.btn_select_all_completed = QPushButton("Chọn tất cả video")
+        self.btn_select_all_completed.setFixedHeight(30)
+        self.btn_select_all_completed.setStyleSheet("""
+            QPushButton {
+                background-color: #17243B;
+                border: 1px solid #2B3D59;
+                border-radius: 6px;
+                color: #CBD5E1;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 0 10px;
+            }
+            QPushButton:hover {
+                background-color: #24354F;
+                color: #FFFFFF;
+                border-color: #6258E8;
+            }
+        """)
+        self.btn_select_all_completed.clicked.connect(self._select_all_completed)
+        bottom_layout.addWidget(self.btn_select_all_completed)
 
         bottom_layout.addStretch()
 
@@ -1653,6 +1695,10 @@ class VideoDownloadTab(QWidget):
         self.model.clear_selection()
         self._update_ui_state()
 
+    def _select_all_completed(self) -> None:
+        self.model.select_all_completed()
+        self._update_ui_state()
+
     # --- FILTER & SORT ---
     def _on_filter_button_clicked(self, clicked_btn: QPushButton, filter_key: str) -> None:
         for btn in self.filter_btn_group.buttons():
@@ -1694,16 +1740,27 @@ class VideoDownloadTab(QWidget):
     # --- FANPAGE PICKER & COMPOSER HANDOFF ---
     def _open_fanpage_picker(self) -> None:
         fanpages = []
-        if self.page_repo and hasattr(self.page_repo, "get_all_pages"):
+        if self.page_repo:
             try:
-                fanpages = self.page_repo.get_all_pages()
+                if hasattr(self.page_repo, "list_pages"):
+                    fanpages = self.page_repo.list_pages()
+                elif hasattr(self.page_repo, "get_all_pages"):
+                    fanpages = self.page_repo.get_all_pages()
             except Exception as e:
-                logger.debug(f"Không thể lấy danh sách Fanpage: {e}")
+                logger.error(f"Không thể lấy danh sách Fanpage: {e}")
+
+        if not fanpages:
+            QMessageBox.information(
+                self,
+                "Chưa có Fanpage",
+                "Chưa có Fanpage nào được kết nối trong hệ thống.\nVui lòng vào mục 'Quản lý Fanpage' để kết nối trang.",
+            )
+            return
 
         popup = FanpagePickerPopup(fanpages, list(self.selected_fanpage_ids), parent=self)
         popup.pages_selected.connect(self._on_fanpages_selected)
-        btn_pos = self.btn_select_fanpage.mapToGlobal(QPoint(0, -popup.height()))
-        popup.move(btn_pos)
+        btn_pos = self.btn_select_fanpage.mapToGlobal(QPoint(0, 0))
+        popup.move(btn_pos.x(), max(10, btn_pos.y() - popup.height() - 6))
         popup.exec()
 
     def _on_fanpages_selected(self, page_ids: List[str]) -> None:
@@ -1724,8 +1781,10 @@ class VideoDownloadTab(QWidget):
                 "file_path": t.local_file_path,
                 "media_id": t.media_id,
                 "title": t.title,
+                "caption": t.title,
                 "platform": t.source_platform,
                 "url": t.source_url,
+                "page_ids": list(self.selected_fanpage_ids),
             })
         else:
             self._open_batch_dialog("compose")
@@ -1742,27 +1801,101 @@ class VideoDownloadTab(QWidget):
         for t in selected:
             media_items.append({
                 "id": t.media_id,
+                "media_id": t.media_id,
                 "title": t.title,
+                "caption": t.title,
                 "local_path": t.local_file_path,
                 "thumbnail_path": t.thumbnail_path,
                 "duration": t.duration_sec,
+                "platform": t.source_platform,
             })
 
         fanpages = []
-        if self.page_repo and hasattr(self.page_repo, "get_all_pages"):
+        if self.page_repo:
             try:
-                fanpages = self.page_repo.get_all_pages()
-            except Exception:
-                pass
+                if hasattr(self.page_repo, "list_pages"):
+                    fanpages = self.page_repo.list_pages()
+                elif hasattr(self.page_repo, "get_all_pages"):
+                    fanpages = self.page_repo.get_all_pages()
+            except Exception as e:
+                logger.error(f"Lỗi lấy danh sách Fanpage: {e}")
 
-        dlg = BatchComposeDialog(media_items, fanpages, initial_mode=mode, parent=self)
+        dlg = BatchComposeDialog(
+            media_items=media_items,
+            fanpages=fanpages,
+            initial_selected_page_ids=list(self.selected_fanpage_ids),
+            initial_mode=mode,
+            parent=self,
+        )
         dlg.batch_confirmed.connect(self._on_batch_confirmed)
         dlg.exec()
 
     def _on_batch_confirmed(self, payload: dict) -> None:
-        # Tương thích đặt lịch hàng loạt
-        if hasattr(self, "batch_schedule_created"):
-            self.batch_schedule_created.emit([payload])
+        media_items = payload.get("media_items", [])
+        fanpages = payload.get("fanpages", [])
+        caption = payload.get("caption", "")
+        use_original_titles = payload.get("use_original_titles", True)
+        start_time = payload.get("start_datetime")
+        interval_min = payload.get("interval_minutes", 15)
+
+        if not fanpages:
+            QMessageBox.warning(self, "Chưa chọn Fanpage", "Vui lòng chọn ít nhất một Fanpage đích.")
+            return
+
+        selected_pids = payload.get("selected_page_ids", [str(p.get("id") or p.get("page_id")) for p in fanpages])
+        self.selected_fanpage_ids = set(selected_pids)
+        if self.selected_fanpage_ids:
+            self.btn_select_fanpage.setText(f"Fanpage ({len(self.selected_fanpage_ids)}) ▾")
+
+        if not self.queue_repo:
+            if hasattr(self, "batch_schedule_created"):
+                self.batch_schedule_created.emit([payload])
+            return
+
+        from src.lovira.domain.composer import ContentSnapshot, ContentType, ScheduleMode
+        from src.lovira.domain.timezone import vn_datetime_to_utc_iso
+        import uuid
+
+        batch_id = f"batch_{uuid.uuid4().hex[:8]}"
+        request_id = f"req_{uuid.uuid4().hex[:8]}"
+        snapshots = []
+        curr_dt = start_time or datetime.now()
+
+        for m in media_items:
+            final_cap = m.get("title") if use_original_titles and m.get("title") else caption
+            if not final_cap:
+                final_cap = Path(m["local_path"]).stem
+            for p in fanpages:
+                pid = str(p.get("id") or p.get("page_id") or p.get("facebook_page_id"))
+                scheduled_utc = vn_datetime_to_utc_iso(curr_dt) if curr_dt else None
+                snapshots.append(
+                    ContentSnapshot(
+                        batch_id=batch_id,
+                        page_id=pid,
+                        content_type=ContentType.REELS,
+                        final_caption=final_cap,
+                        primary_media_id=m.get("id") or m.get("media_id"),
+                        media_checksum=m.get("checksum"),
+                        media_path=m["local_path"],
+                        scheduled_at_utc=scheduled_utc,
+                        schedule_mode=ScheduleMode.LOCAL,
+                    )
+                )
+                curr_dt += timedelta(minutes=interval_min)
+
+        try:
+            jobs = self.queue_repo.enqueue_batch(request_id, snapshots)
+            if hasattr(self, "batch_schedule_created"):
+                self.batch_schedule_created.emit(jobs)
+            QMessageBox.information(
+                self,
+                "Đặt lịch thành công",
+                f"Đã tạo thành công {len(jobs)} bài đăng vào hàng đợi lịch!\n"
+                "Bạn có thể theo dõi tiến độ chi tiết tại mục 'Lịch đăng'.",
+            )
+            self._clear_selection()
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi tạo lịch hàng loạt", f"Không thể lưu các tác vụ:\n{e}")
 
     # --- CÁC HÀM TƯƠNG THÍCH NGƯỢC (TEST SUITE COMPATIBILITY) ---
     def _inspect_video(self) -> None:
@@ -2462,23 +2595,35 @@ class FanpagePickerPopup(QDialog):
         self.checkbox_map.clear()
 
         for page in self.pages:
-            pid = str(page.get("id") or page.get("page_id"))
+            pid = str(page.get("id") or page.get("page_id") or page.get("facebook_page_id"))
             pname = page.get("name") or page.get("page_name") or f"Page {pid}"
-            is_valid = bool(page.get("access_token") or page.get("is_valid", True))
+            status = str(page.get("status") or "ready")
+            is_valid = status not in ("token_expired", "expired")
 
             row_frame = QFrame()
-            row_frame.setStyleSheet("background-color: #17243B; border-radius: 6px; padding: 4px;")
+            row_frame.setStyleSheet("""
+                QFrame {
+                    background-color: #17243B;
+                    border: 1px solid #24354F;
+                    border-radius: 6px;
+                }
+                QFrame:hover {
+                    background-color: #1E2D47;
+                    border-color: #384F73;
+                }
+            """)
             row_layout = QHBoxLayout(row_frame)
-            row_layout.setContentsMargins(6, 4, 6, 4)
+            row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
 
             cb = QCheckBox(pname)
-            cb.setChecked(pid in self.selected_ids)
+            cb.setChecked(pid in self.selected_ids and is_valid)
             cb.setToolTip(f"ID: {pid}")
+            cb.setCursor(Qt.CursorShape.PointingHandCursor if is_valid else Qt.CursorShape.ForbiddenCursor)
 
             if not is_valid:
                 cb.setEnabled(False)
-                lbl_status = QLabel("! Token lỗi")
+                lbl_status = QLabel("! Token hết hạn")
                 lbl_status.setStyleSheet("color: #EF4444; font-size: 11px; font-weight: 700;")
             else:
                 lbl_status = QLabel("● Sẵn sàng")
@@ -2537,10 +2682,13 @@ class FanpagePickerPopup(QDialog):
 
 class BatchComposeDialog(QDialog):
     """
-    Hộp thoại tạo bài hoặc lên lịch hàng loạt:
-    - Giải thích rõ: N video x M Fanpage = N*M bài dự kiến
-    - Cung cấp thời gian bắt đầu, khoảng cách đăng và múi giờ
-    - Xem trước lịch đăng theo từng Fanpage
+    Hộp thoại tạo bài viết & Lên lịch đăng hàng loạt:
+    - Chọn Fanpage đích trực quan ngay trong popup (Có tìm kiếm + Chọn tất cả + Hiển thị số lượng)
+    - Tự động lấy Title & Hashtag của video đã tải điền vào Caption
+    - Tùy chọn giữ nguyên Title/Hashtag riêng từng video hoặc dùng Caption chung
+    - Cài đặt thời gian bắt đầu (múi giờ VN UTC+7) và khoảng cách giữa các bài
+    - Bảng xem trước phân bổ lịch trực quan
+    - Tạo và lưu lịch đăng trực tiếp vào hàng đợi
     """
 
     batch_confirmed = Signal(dict)
@@ -2549,6 +2697,7 @@ class BatchComposeDialog(QDialog):
         self,
         media_items: List[Dict[str, Any]],
         fanpages: List[Dict[str, Any]],
+        initial_selected_page_ids: Optional[List[str]] = None,
         initial_mode: str = "schedule",
         parent: Optional[QWidget] = None,
     ):
@@ -2556,9 +2705,19 @@ class BatchComposeDialog(QDialog):
         self.media_items = media_items
         self.fanpages = fanpages
         self.mode = initial_mode
+        self.selected_page_ids: Set[str] = set(initial_selected_page_ids or [])
 
-        self.setWindowTitle("Xác nhận Đặt lịch / Tạo bài hàng loạt")
-        self.setFixedSize(580, 520)
+        # Nếu chưa chọn page nào từ ngoài, tự động chọn tất cả page khả dụng
+        if not self.selected_page_ids:
+            for p in self.fanpages:
+                st = str(p.get("status") or "ready")
+                if st not in ("token_expired", "expired"):
+                    pid = str(p.get("id") or p.get("page_id") or p.get("facebook_page_id"))
+                    self.selected_page_ids.add(pid)
+
+        self.setWindowTitle("Xác nhận Đặt lịch / Tạo bài đăng")
+        self.resize(680, 720)
+        self.setMinimumSize(600, 600)
         self.setStyleSheet("""
             QDialog {
                 background-color: #0D1627;
@@ -2578,81 +2737,165 @@ class BatchComposeDialog(QDialog):
                 border-radius: 6px;
                 padding: 6px;
                 color: #F1F5F9;
+                font-size: 12px;
+            }
+            QTextEdit:focus, QLineEdit:focus, QDateTimeEdit:focus, QSpinBox:focus {
+                border-color: #6258E8;
+            }
+            QTableWidget {
+                background-color: #0B111D;
+                border: 1px solid #1E2D47;
+                border-radius: 6px;
+                color: #E2E8F0;
+                gridline-color: #1E2D47;
+            }
+            QHeaderView::section {
+                background-color: #131D2E;
+                color: #94A3B8;
+                font-weight: 700;
+                font-size: 11px;
+                border: none;
+                padding: 4px;
             }
             QPushButton#primaryBtn {
                 background-color: #6258E8;
                 color: #FFFFFF;
                 font-weight: 700;
                 border-radius: 6px;
-                padding: 8px 16px;
+                padding: 9px 18px;
             }
             QPushButton#primaryBtn:hover {
                 background-color: #5348D6;
+            }
+            QPushButton#primaryBtn:disabled {
+                background-color: #2D3748;
+                color: #718096;
             }
         """)
 
         self._init_ui()
 
     def _init_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(12)
 
         # Tiêu đề
         title_box = QVBoxLayout()
-        title_lbl = QLabel("TẠO BÀI VIẾT / LÊN LỊCH HÀNG LOẠT")
+        title_box.setSpacing(2)
+        title_lbl = QLabel("TẠO BÀI VIẾT & LÊN LỊCH ĐĂNG")
         title_lbl.setStyleSheet("font-size: 16px; font-weight: 800; color: #818CF8;")
-        sub_lbl = QLabel("Phát hành đa kênh với kiểm soát từng bài đăng riêng biệt")
+        sub_lbl = QLabel(f"Phát hành tự động {len(self.media_items)} video đã chọn sang nhiều Fanpage Facebook.")
         sub_lbl.setStyleSheet("font-size: 12px; color: #94A3B8;")
         title_box.addWidget(title_lbl)
         title_box.addWidget(sub_lbl)
-        layout.addLayout(title_box)
+        main_layout.addLayout(title_box)
 
-        # Banner tính toán số lượng
-        n_videos = len(self.media_items)
-        n_pages = len(self.fanpages)
-        total_posts = n_videos * n_pages
+        # Scroll area bao bọc nội dung
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
 
-        banner = QFrame()
-        banner.setObjectName("cardBox")
-        banner_layout = QVBoxLayout(banner)
-        banner_layout.setContentsMargins(14, 12, 14, 12)
-        banner_layout.setSpacing(6)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(12)
 
-        formula_lbl = QLabel(f"📐 <b>Quy tắc gộp mặc định:</b> Mỗi video là một bài viết riêng.")
-        formula_lbl.setStyleSheet("font-size: 13px; color: #F1F5F9;")
-        detail_lbl = QLabel(f"Đã chọn: <b>{n_videos} video</b> × <b>{n_pages} Fanpage</b> = <span style='color: #10B981; font-weight: 800; font-size: 14px;'>{total_posts} bài dự kiến</span>")
-        detail_lbl.setStyleSheet("font-size: 13px; color: #94A3B8;")
+        # 1. Card CHỌN FANPAGE ĐÍCH
+        fanpage_box = QFrame()
+        fanpage_box.setObjectName("cardBox")
+        fb_layout = QVBoxLayout(fanpage_box)
+        fb_layout.setContentsMargins(14, 12, 14, 12)
+        fb_layout.setSpacing(8)
 
-        banner_layout.addWidget(formula_lbl)
-        banner_layout.addWidget(detail_lbl)
-        layout.addWidget(banner)
+        fb_head = QHBoxLayout()
+        self.lbl_fb_title = QLabel("1. FANPAGE ĐÍCH")
+        self.lbl_fb_title.setStyleSheet("font-size: 12px; font-weight: 700; color: #6258E8;")
+        fb_head.addWidget(self.lbl_fb_title)
+        fb_head.addStretch()
 
-        # Nội dung / Caption mẫu chung
-        caption_box = QVBoxLayout()
-        caption_box.setSpacing(6)
-        caption_lbl = QLabel("Nội dung bài viết (áp dụng chung cho toàn bộ bài):")
-        caption_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #CBD5E1;")
+        self.lbl_pages_counter = QLabel(f"Đã chọn: {len(self.selected_page_ids)} trang")
+        self.lbl_pages_counter.setStyleSheet("color: #10B981; font-weight: 700; font-size: 12px;")
+        fb_head.addWidget(self.lbl_pages_counter)
+        fb_layout.addLayout(fb_head)
+
+        # Ô tìm kiếm trang & Chọn tất cả
+        fp_tool_row = QHBoxLayout()
+        self.input_search_pages = QLineEdit()
+        self.input_search_pages.setPlaceholderText("🔍 Tìm theo tên trang hoặc ID...")
+        self.input_search_pages.textChanged.connect(self._filter_page_rows)
+        fp_tool_row.addWidget(self.input_search_pages, stretch=1)
+
+        self.cb_select_all_pages = QCheckBox("Chọn tất cả trang")
+        self.cb_select_all_pages.setStyleSheet("color: #CBD5E1; font-size: 12px;")
+        self.cb_select_all_pages.clicked.connect(self._toggle_select_all_pages)
+        fp_tool_row.addWidget(self.cb_select_all_pages)
+        fb_layout.addLayout(fp_tool_row)
+
+        # Danh sách checkboxes cuộn
+        pages_scroll = QScrollArea()
+        pages_scroll.setFixedHeight(120)
+        pages_scroll.setWidgetResizable(True)
+        pages_scroll.setStyleSheet("border: 1px solid #1E2D47; border-radius: 6px; background-color: #0B111D;")
+
+        self.pages_container = QWidget()
+        self.pages_list_layout = QVBoxLayout(self.pages_container)
+        self.pages_list_layout.setContentsMargins(6, 6, 6, 6)
+        self.pages_list_layout.setSpacing(4)
+
+        self.page_checkbox_map: Dict[str, Tuple[QCheckBox, QFrame]] = {}
+        self._populate_fanpages_list()
+        pages_scroll.setWidget(self.pages_container)
+        fb_layout.addWidget(pages_scroll)
+        layout.addWidget(fanpage_box)
+
+        # 2. Card NỘI DUNG & HASHTAG VIDEO
+        content_box = QFrame()
+        content_box.setObjectName("cardBox")
+        cb_layout = QVBoxLayout(content_box)
+        cb_layout.setContentsMargins(14, 12, 14, 12)
+        cb_layout.setSpacing(8)
+
+        cb_head = QHBoxLayout()
+        cb_title = QLabel("2. TIÊU ĐỀ & HASHTAG BÀI ĐĂNG")
+        cb_title.setStyleSheet("font-size: 12px; font-weight: 700; color: #6258E8;")
+        cb_head.addWidget(cb_title)
+        cb_head.addStretch()
+        cb_layout.addLayout(cb_head)
+
+        self.cb_use_original_titles = QCheckBox("Giữ nguyên Tiêu đề & Hashtag riêng của từng video khi đăng bài (Khuyên dùng)")
+        self.cb_use_original_titles.setChecked(True)
+        self.cb_use_original_titles.setStyleSheet("color: #10B981; font-weight: 600; font-size: 12px;")
+        self.cb_use_original_titles.toggled.connect(self._update_preview_table)
+        cb_layout.addWidget(self.cb_use_original_titles)
+
+        # Lấy title / hashtag đầu tiên làm caption mặc định
+        first_caption = ""
+        if self.media_items:
+            first_caption = self.media_items[0].get("caption") or self.media_items[0].get("title") or ""
+
         self.caption_edit = QTextEdit()
-        self.caption_edit.setPlaceholderText("Nhập tiêu đề hoặc caption chung...")
+        self.caption_edit.setPlaceholderText("Nhập tiêu đề hoặc hashtag bổ sung chung...")
         self.caption_edit.setFixedHeight(75)
-        caption_box.addWidget(caption_lbl)
-        caption_box.addWidget(self.caption_edit)
-        layout.addLayout(caption_box)
+        self.caption_edit.setPlainText(first_caption)
+        self.caption_edit.textChanged.connect(self._update_preview_table)
+        cb_layout.addWidget(self.caption_edit)
+        layout.addWidget(content_box)
 
-        # Cấu hình lịch đăng
-        sched_frame = QFrame()
-        sched_frame.setObjectName("cardBox")
-        sched_layout = QVBoxLayout(sched_frame)
-        sched_layout.setContentsMargins(14, 12, 14, 12)
-        sched_layout.setSpacing(10)
+        # 3. Card CẤU HÌNH THỜI GIAN LÊN LỊCH
+        sched_box = QFrame()
+        sched_box.setObjectName("cardBox")
+        sb_layout = QVBoxLayout(sched_box)
+        sb_layout.setContentsMargins(14, 12, 14, 12)
+        sb_layout.setSpacing(10)
 
-        sched_title = QLabel("CẤU HÌNH THỜI GIAN LÊN LỊCH")
+        sched_title = QLabel("3. CẤU HÌNH THỜI GIAN LÊN LỊCH (MÚI GIỜ VIỆT NAM UTC+7)")
         sched_title.setStyleSheet("font-size: 12px; font-weight: 700; color: #6258E8;")
-        sched_layout.addWidget(sched_title)
+        sb_layout.addWidget(sched_title)
 
         time_row = QHBoxLayout()
-        time_row.setSpacing(10)
+        time_row.setSpacing(12)
         time_row.addWidget(QLabel("Thời gian bắt đầu:"))
 
         self.start_dt = QDateTimeEdit(QDateTime.currentDateTime().addSecs(15 * 60))
@@ -2660,80 +2903,196 @@ class BatchComposeDialog(QDialog):
         self.start_dt.setCalendarPopup(True)
         time_row.addWidget(self.start_dt)
 
-        time_row.addWidget(QLabel("Khoảng cách giữa các bài:"))
+        time_row.addWidget(QLabel("Giãn cách giữa các bài:"))
         self.spin_interval = QSpinBox()
         self.spin_interval.setRange(5, 1440)
         self.spin_interval.setValue(15)
         self.spin_interval.setSuffix(" phút")
         time_row.addWidget(self.spin_interval)
 
-        sched_layout.addLayout(time_row)
+        sb_layout.addLayout(time_row)
+        layout.addWidget(sched_box)
 
-        tz_lbl = QLabel("Múi giờ chuẩn: Asia/Ho_Chi_Minh (UTC+7) · Đảm bảo không trùng giờ.")
-        tz_lbl.setStyleSheet("color: #64748B; font-size: 11px;")
-        sched_layout.addWidget(tz_lbl)
+        # 4. Card XEM TRƯỚC PHÂN BỔ LỊCH ĐĂNG
+        preview_box = QFrame()
+        preview_box.setObjectName("cardBox")
+        pb_layout = QVBoxLayout(preview_box)
+        pb_layout.setContentsMargins(14, 12, 14, 12)
+        pb_layout.setSpacing(8)
 
-        layout.addWidget(sched_frame)
-
-        # Bảng xem trước lịch đăng mẫu
-        preview_lbl = QLabel("Xem trước phân bổ lịch:")
-        preview_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #94A3B8;")
-        layout.addWidget(preview_lbl)
+        pb_title = QLabel("4. XEM TRƯỚC PHÂN BỔ LỊCH ĐĂNG")
+        pb_title.setStyleSheet("font-size: 12px; font-weight: 700; color: #6258E8;")
+        pb_layout.addWidget(pb_title)
 
         self.table_preview = QTableWidget()
         self.table_preview.setColumnCount(3)
-        self.table_preview.setHorizontalHeaderLabels(["Video", "Fanpage đích", "Thời gian dự kiến (UTC+7)"])
+        self.table_preview.setHorizontalHeaderLabels(["Video (Tiêu đề / Hashtag)", "Fanpage đích", "Thời gian dự kiến (UTC+7)"])
         self.table_preview.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table_preview.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table_preview.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table_preview.setFixedHeight(120)
-        layout.addWidget(self.table_preview)
+        self.table_preview.setFixedHeight(130)
+        pb_layout.addWidget(self.table_preview)
+        layout.addWidget(preview_box)
 
-        self._update_preview_table()
+        scroll.setWidget(container)
+        main_layout.addWidget(scroll, stretch=1)
+
+        # Nối tín hiệu cập nhật bảng preview
         self.start_dt.dateTimeChanged.connect(self._update_preview_table)
         self.spin_interval.valueChanged.connect(self._update_preview_table)
 
-        # Nút xác nhận
-        btn_row = QHBoxLayout()
+        # Footer Bottom Bar
+        footer = QHBoxLayout()
+        footer.setSpacing(12)
+
+        self.lbl_total_calc = QLabel()
+        self.lbl_total_calc.setStyleSheet("font-size: 13px; color: #CBD5E1;")
+        footer.addWidget(self.lbl_total_calc)
+        footer.addStretch()
+
         btn_cancel = QPushButton("Hủy bỏ")
+        btn_cancel.setFixedHeight(36)
         btn_cancel.clicked.connect(self.reject)
+        footer.addWidget(btn_cancel)
 
-        self.btn_confirm = QPushButton(f"🚀 Xác nhận tạo {total_posts} lịch đăng")
+        self.btn_confirm = QPushButton("🚀 Xác nhận đặt lịch")
         self.btn_confirm.setObjectName("primaryBtn")
+        self.btn_confirm.setFixedHeight(36)
         self.btn_confirm.clicked.connect(self._on_confirm_clicked)
+        footer.addWidget(self.btn_confirm)
 
-        btn_row.addWidget(btn_cancel)
-        btn_row.addStretch()
-        btn_row.addWidget(self.btn_confirm)
-        layout.addLayout(btn_row)
+        main_layout.addLayout(footer)
+
+        self._update_preview_table()
+
+    def _populate_fanpages_list(self) -> None:
+        while self.pages_list_layout.count():
+            w = self.pages_list_layout.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        self.page_checkbox_map.clear()
+
+        for page in self.fanpages:
+            pid = str(page.get("id") or page.get("page_id") or page.get("facebook_page_id"))
+            pname = page.get("name") or page.get("page_name") or f"Page {pid}"
+            status = str(page.get("status") or "ready")
+            is_valid = status not in ("token_expired", "expired")
+
+            row_frame = QFrame()
+            row_frame.setStyleSheet("""
+                QFrame {
+                    background-color: #131E33;
+                    border: 1px solid #1E2D47;
+                    border-radius: 4px;
+                }
+                QFrame:hover {
+                    background-color: #1A2942;
+                    border-color: #384F73;
+                }
+            """)
+            r_lay = QHBoxLayout(row_frame)
+            r_lay.setContentsMargins(6, 4, 6, 4)
+            r_lay.setSpacing(8)
+
+            cb = QCheckBox(pname)
+            cb.setChecked(pid in self.selected_page_ids and is_valid)
+            cb.setEnabled(is_valid)
+            cb.setToolTip(f"Page ID: {pid}")
+            cb.stateChanged.connect(lambda state, p_id=pid: self._on_page_toggled(p_id, state))
+
+            if not is_valid:
+                lbl_st = QLabel("! Hết hạn")
+                lbl_st.setStyleSheet("color: #EF4444; font-size: 11px; font-weight: 700;")
+            else:
+                lbl_st = QLabel("● Sẵn sàng")
+                lbl_st.setStyleSheet("color: #10B981; font-size: 11px;")
+
+            r_lay.addWidget(cb, stretch=1)
+            r_lay.addWidget(lbl_st)
+
+            self.pages_list_layout.addWidget(row_frame)
+            self.page_checkbox_map[pid] = (cb, row_frame)
+
+        self.pages_list_layout.addStretch()
+
+    def _on_page_toggled(self, pid: str, state: int) -> None:
+        if state == Qt.CheckState.Checked.value:
+            self.selected_page_ids.add(pid)
+        else:
+            self.selected_page_ids.discard(pid)
+        self.lbl_pages_counter.setText(f"Đã chọn: {len(self.selected_page_ids)} trang")
+        self._update_preview_table()
+
+    def _toggle_select_all_pages(self, checked: bool) -> None:
+        for pid, (cb, _) in self.page_checkbox_map.items():
+            if cb.isEnabled():
+                cb.setChecked(checked)
+                if checked:
+                    self.selected_page_ids.add(pid)
+                else:
+                    self.selected_page_ids.discard(pid)
+        self.lbl_pages_counter.setText(f"Đã chọn: {len(self.selected_page_ids)} trang")
+        self._update_preview_table()
+
+    def _filter_page_rows(self, text: str) -> None:
+        q = text.strip().lower()
+        for page in self.fanpages:
+            pid = str(page.get("id") or page.get("page_id") or page.get("facebook_page_id"))
+            pname = (page.get("name") or page.get("page_name") or "").lower()
+            if pid in self.page_checkbox_map:
+                _, frame = self.page_checkbox_map[pid]
+                frame.setVisible(not q or q in pname or q in pid)
 
     def _update_preview_table(self) -> None:
         self.table_preview.setRowCount(0)
         start_time = self.start_dt.dateTime().toPython()
         interval_min = self.spin_interval.value()
 
+        chosen_pages = [p for p in self.fanpages if str(p.get("id") or p.get("page_id") or p.get("facebook_page_id")) in self.selected_page_ids]
+
         current_time = start_time
         row = 0
+        use_ind = self.cb_use_original_titles.isChecked() if hasattr(self, "cb_use_original_titles") else True
+        custom_cap = self.caption_edit.toPlainText().strip()
+
         for m in self.media_items:
-            v_name = m.get("display_title") or Path(m.get("local_path", "")).stem
-            for p in self.fanpages:
+            m_title = m.get("caption") or m.get("title") or Path(m.get("local_path", "")).stem
+            v_display = m_title if (use_ind or not custom_cap) else custom_cap
+            for p in chosen_pages:
                 p_name = p.get("name") or p.get("page_name") or "Fanpage"
                 self.table_preview.insertRow(row)
-                self.table_preview.setItem(row, 0, QTableWidgetItem(v_name))
+                self.table_preview.setItem(row, 0, QTableWidgetItem(v_display))
                 self.table_preview.setItem(row, 1, QTableWidgetItem(p_name))
                 self.table_preview.setItem(row, 2, QTableWidgetItem(current_time.strftime("%d/%m/%Y %H:%M")))
                 current_time += timedelta(minutes=interval_min)
                 row += 1
-                if row >= 20:  # Giới hạn hiển thị xem trước
+                if row >= 30:
                     break
-            if row >= 20:
+            if row >= 30:
                 break
 
+        n_vid = len(self.media_items)
+        n_page = len(chosen_pages)
+        total_posts = n_vid * n_page
+        self.btn_confirm.setText(f"🚀 Xác nhận tạo {total_posts} lịch đăng")
+        self.btn_confirm.setEnabled(total_posts > 0)
+        self.lbl_total_calc.setText(
+            f"Đã chọn: <b>{n_vid} video</b> × <b>{n_page} Fanpage</b> = "
+            f"<span style='color: #10B981; font-weight: 800; font-size: 14px;'>{total_posts} bài dự kiến</span>"
+        )
+
     def _on_confirm_clicked(self) -> None:
+        chosen_pages = [p for p in self.fanpages if str(p.get("id") or p.get("page_id") or p.get("facebook_page_id")) in self.selected_page_ids]
+        if not chosen_pages:
+            QMessageBox.warning(self, "Chưa chọn Fanpage", "Vui lòng chọn ít nhất một Fanpage đích.")
+            return
+
         payload = {
             "media_items": self.media_items,
-            "fanpages": self.fanpages,
+            "fanpages": chosen_pages,
+            "selected_page_ids": list(self.selected_page_ids),
             "caption": self.caption_edit.toPlainText().strip(),
+            "use_original_titles": self.cb_use_original_titles.isChecked(),
             "start_datetime": self.start_dt.dateTime().toPython(),
             "interval_minutes": self.spin_interval.value(),
         }

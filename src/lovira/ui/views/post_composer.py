@@ -2086,6 +2086,12 @@ class PostComposerView(QWidget):
                     str(suggestion)
                 )
 
+        page_ids = data.get("page_ids")
+        if page_ids and hasattr(self, "page_list_widget"):
+            for pid in page_ids:
+                if hasattr(self.page_list_widget, "set_page_selected"):
+                    self.page_list_widget.set_page_selected(str(pid), True)
+
         if hasattr(self, "media_attached_card") and hasattr(self, "media_empty_card"):
             self.media_attached_card.show()
             self.media_empty_card.hide()
