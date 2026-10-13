@@ -441,7 +441,49 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
   - Chặn triệt để hành vi silent fallback gán bài đăng lên toàn bộ fanpage khi sai ID (A-07).
   - Không tải và thực thi code từ file excel; chỉ đọc dữ liệu thô.
 - **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Bulk Import Wizard 2.0, khắc phục triệt để lỗi A-07, có visual snapshot `09_bulk_import_v2.png`, 118/118 tests passed.
-- **Next unblocked task:** UX-11 — Comments Workspace 2.0 (`comments_workspace.py`).
+
+---
+
+### UX-11 — Comments Workspace 2.0 (`comments_workspace.py`)
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 13:38 — 13/10/2026 13:45
+- **Baseline SHA / Commit SHA:** `1b9b170` / Pending
+- **Scope and no-go changes:**
+  - Nâng cấp Quản lý Bình luận & Phản hồi nhanh 2.0 bám sát Mockup `06_binh_luan.png`:
+    1. **Bố cục Split-pane chuyên nghiệp:**
+       - Panel Trái: Danh sách bình luận, Live search theo tên/nội dung (`search_filter`), lọc theo trạng thái (`combo_filter_status`), chuyển đổi mượt mà giữa Bảng dữ liệu và `EmptyState`.
+       - Panel Phải: Chi tiết luồng bình luận được chọn (Khách hàng, nội dung quote, thời gian giờ VN, mã bài viết, nút Ẩn/Hiện `btn_toggle_hide`, nút Xóa cache `btn_delete_cache`).
+       - Khung Phản hồi nhanh: Bộ chọn mẫu câu có sẵn (`combo_templates`), ô soạn thảo phản hồi (`input_reply`), bộ đếm ký tự (`lbl_char_count`), nút `Gửi phản hồi`.
+    2. **Hộp thoại Quản lý Mẫu câu (`TemplateManagerDialog`):**
+       - Xem danh sách mẫu câu từ `ReplyTemplateRepository`, thêm mẫu câu mới, xóa mẫu đã chọn.
+    3. **Báo cáo Quyền hạn trung thực (Khắc phục lỗi A-01):**
+       - Giữ nguyên `perm_banner`, `lbl_perm_msg` báo cáo trung thực trạng thái quyền Meta (`pages_manage_engagement` / `pages_read_engagement`), không giả mạo dữ liệu hay MagicMock production.
+    4. **Đồng bộ với `GlobalPageContext` & Thao tác an toàn:**
+       - Tự động lọc bình luận khi chuyển đổi Fanpage trên thanh tiêu đề toàn cục.
+       - Hỗ trợ ẩn/bỏ ẩn bình luận và xóa bản ghi khỏi bộ nhớ đệm SQLite nội bộ.
+- **Existing behavior to preserve:** Bảo toàn 100% các attribute cũ `comment_repo`, `reply_repo`, `page_repo`, `context`, `btn_refresh`, `perm_banner`, `lbl_perm_msg`, `combo_filter_status`, `table_comments`, `lbl_comment_context`, `input_reply`, `btn_template`, `btn_send_reply`, `_sync_comments`, `_on_page_scope_changed`, `reload_comments`, `_on_comment_selected`, `_use_template`, `_send_reply`.
+- **Changed files:**
+  - `src/lovira/ui/widgets/empty_state.py` (added `no_comments` factory)
+  - `src/lovira/ui/shell/global_context.py` (added `get_selected_page_id`)
+  - `src/lovira/ui/views/comments_workspace.py` (upgraded to 2.0)
+  - `tests/test_ux11_comments_workspace.py` (new - 4 test cases)
+  - `scripts/capture_comments_v2.py` (new - snapshot utility)
+  - `docs/redesign_screenshots/06_comments_v2.png` (captured visual snapshot)
+- **UI states implemented:**
+  - Banner quyền hạn trung thực.
+  - Danh sách bình luận 4 cột, lọc trạng thái, live search.
+  - EmptyState no_comments & search_not_found.
+  - Khung xem chi tiết bình luận kèm thao tác Ẩn/Hiện, Xóa cache.
+  - Soạn câu trả lời kèm nạp mẫu câu tự động.
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux11_comments_workspace.py -v`: 4 passed in 0.77s.
+  - `python -m pytest tests/ -v`: 122 passed in 12.02s (toàn bộ 122/122 tests xanh 100%).
+- **Security & a11y self-review:**
+  - Không để lộ thông tin nhạy cảm của khách hàng; dữ liệu được quản lý cục bộ an toàn.
+  - Banner cảnh báo minh bạch giúp người dùng hiểu rõ giới hạn quyền Graph API.
+- **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Comments Workspace 2.0, khắc phục triệt để lỗi A-01, có visual snapshot `06_comments_v2.png`, 122/122 tests passed.
+- **Next unblocked task:** UX-12 — Settings 2.0 & Activity Log 2.0 (`settings_workspace.py`, `activity_workspace.py`).
+
 
 
 

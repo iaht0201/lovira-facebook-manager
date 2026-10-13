@@ -114,6 +114,19 @@ class EmptyState(QWidget):
         return w
 
     @classmethod
+    def no_comments(cls, on_sync: Optional[Callable] = None) -> "EmptyState":
+        w = cls(
+            icon_name="comments",
+            title="Chưa có bình luận nào",
+            description="Chưa có bình luận nào trong bộ nhớ đệm. Nhấn 'Đồng bộ bình luận' để tải tương tác mới nhất từ Facebook.",
+            action_text="Đồng bộ bình luận ngay",
+            action_icon="refresh",
+        )
+        if on_sync:
+            w.action_clicked.connect(on_sync)
+        return w
+
+    @classmethod
     def search_not_found(cls, query: str = "") -> "EmptyState":
         return cls(
             icon_name="search",

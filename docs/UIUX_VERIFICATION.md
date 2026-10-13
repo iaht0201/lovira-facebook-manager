@@ -381,8 +381,40 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   2. `File Info Card & CSV Template`: Cho phép xem thông tin file đã chọn và 1-click tải file mẫu chuẩn `bulk_schedule_template.csv` đúng 5 cột quy định.
   3. `Validation Badges`: Dải thẻ thống kê trực quan đếm số dòng tổng cộng, số dòng hợp lệ màu xanh, số dòng cần sửa màu đỏ.
   4. `Khắc phục triệt để lỗi Audit A-07 P0`: Phân loại rõ ràng từng dòng dữ liệu: nếu Fanpage ID không có trong cơ sở dữ liệu thì đánh dấu lỗi đỏ và loại trừ an toàn, tuyệt đối không silent fallback đăng lên toàn bộ page.
-  5. `QThread Lifecycle Safety`: Gán parent cho worker thread, ngăn ngừa rò rỉ và xung đột bộ nhớ trên Windows.
   6. `ContentSnapshot Constructor Sync`: Chuẩn hóa các tham số bất biến của bài viết khi đẩy vào hàng đợi SQLite WAL.
+
+---
+
+### Task UX-11: Comments Workspace 2.0 (`comments_workspace.py`)
+
+- **Thời gian:** 13/10/2026 13:45 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** Pending
+- **Visual Snapshot:** `docs/redesign_screenshots/06_comments_v2.png` (18 KB, chuẩn thiết kế mockup `06_binh_luan.png`).
+- **Command 1:** `pytest tests/test_ux11_comments_workspace.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux11_comments_workspace.py::test_comments_workspace_layout_and_banner_integrity PASSED [ 25%]
+  tests/test_ux11_comments_workspace.py::test_comments_workspace_empty_state_and_table_switching PASSED [ 50%]
+  tests/test_ux11_comments_workspace.py::test_comments_workspace_template_usage_and_reply_flow PASSED [ 75%]
+  tests/test_ux11_comments_workspace.py::test_comments_workspace_hide_and_delete_comment PASSED [100%]
+  ============================== 4 passed in 0.77s ==============================
+  ```
+- **Command 2 (Full Gate):** `python -m pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 122 items
+  ...
+  ============================ 122 passed in 12.02s =============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `Honest Permission State Banner (A-01)`: Báo cáo trung thực quyền hạn Graph API (`pages_manage_engagement` / `pages_read_engagement`), không dùng MagicMock giả mạo trạng thái sản phẩm.
+  2. `Split-pane Workspace`: Chia 2 phân vùng trực quan: Danh sách bình luận & Bộ lọc (Trái) và Khung chi tiết tương tác & Phản hồi nhanh (Phải).
+  3. `Live Search & Trạng thái`: Lọc tức thời theo tên khách và nội dung bình luận kết hợp combobox trạng thái (Tất cả, Chưa trả lời, Đã trả lời, Đã ẩn).
+  4. `EmptyState Đa tầng`: Tự động chuyển đổi giữa Bảng bình luận và `EmptyState.no_comments()` khi chưa có dữ liệu, hoặc `EmptyState.search_not_found()` khi tìm kiếm không ra kết quả.
+  5. `Mẫu câu phản hồi nhanh & TemplateManagerDialog`: Cho phép lựa chọn mẫu câu tự động đưa vào khung soạn thảo hoặc mở dialog quản lý mẫu câu (thêm/xóa) thông qua `ReplyTemplateRepository`.
+  6. `Thao tác an toàn`: Hỗ trợ Ẩn/Bỏ ẩn bình luận và Xóa bình luận khỏi bộ nhớ đệm SQLite có xác nhận.
+
 
 
 

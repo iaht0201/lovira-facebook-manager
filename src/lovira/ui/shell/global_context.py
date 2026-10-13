@@ -42,6 +42,9 @@ class GlobalPageContext(QObject):
     def selected_page_id(self) -> Optional[str]:
         return self._selected_page_id
 
+    def get_selected_page_id(self) -> Optional[str]:
+        return self._selected_page_id
+
     @property
     def is_all_pages(self) -> bool:
         return self._selected_page_id is None
