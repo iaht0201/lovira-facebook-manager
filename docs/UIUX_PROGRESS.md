@@ -154,7 +154,7 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
 ### UX-04 — Shared UI Primitives
 - **Status:** DONE
 - **Start/End (VN):** 13/10/2026 12:40 — 13/10/2026 12:45
-- **Baseline SHA / Commit SHA:** `1c9061e` / (đang chuẩn bị commit)
+- **Baseline SHA / Commit SHA:** `1c9061e` / `6e98761`
 - **Scope and no-go changes:**
   - Xây dựng 6 UI Primitives dùng chung chuẩn mực theo mục 5 của `docs/UIUX_REDESIGN_PLANNING.md`:
     1. `StatusChip` (`status_chip.py`): Ánh xạ 12 trạng thái DB/API (`ready`, `unverified`, `token_expired`, `insufficient_permissions`, `scheduled_local`, `scheduled_remote`, `publishing`, `published`, `failed`, `cancelled`, `rate_limited`, `unknown`) sang vector icon + nhãn tiếng Việt + màu WCAG AA + tooltip giải thích.
