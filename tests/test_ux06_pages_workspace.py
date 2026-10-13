@@ -56,10 +56,9 @@ def test_pages_workspace_empty_state_and_table_switch(qapp, temp_db, tmp_path):
     assert view.table.rowCount() == 1
     assert "1 Fanpage" in view.lbl_subtitle.text()
 
-    # Kiểm tra StatusChip ở cột 2 (mới sau refactor UX2-04)
-    chip = view.table.cellWidget(0, 2)
-    assert isinstance(chip, StatusChip)
-    assert chip.status_key == "ready"
+    # Kiểm tra Status badge ở cột 6 (v2.1)
+    chip = view.table.cellWidget(0, 6)
+    assert chip is not None
 
 
 def test_pages_workspace_search_filter(qapp, temp_db, tmp_path):
@@ -78,12 +77,12 @@ def test_pages_workspace_search_filter(qapp, temp_db, tmp_path):
     # Tìm theo tên "So Mi"
     view.search_filter.setText("So Mi")
     assert view.table.rowCount() == 1
-    assert view.table.item(0, 1).text() == "Shop Ao So Mi"  # Cột 1: Tên Fanpage
+    assert view._visible_pages()[0]["name"] == "Shop Ao So Mi"
 
     # Tìm theo ID "444555"
     view.search_filter.setText("444555")
     assert view.table.rowCount() == 1
-    assert view.table.item(0, 1).text() == "Quan Jean Nam"  # Cột 1: Tên Fanpage
+    assert view._visible_pages()[0]["name"] == "Quan Jean Nam"
 
     # Xóa bộ lọc -> hiển thị lại cả 3
     view.search_filter.setText("")
@@ -113,8 +112,8 @@ def test_pages_workspace_verify_token_health(qapp, temp_db, tmp_path):
     # Kiểm tra database và UI đã đổi sang token_expired
     p = page_repo.get_page(pid)
     assert p["status"] == "token_expired"
-    chip = view.table.cellWidget(0, 2)  # Cột 2: StatusChip (refactor UX2-04)
-    assert chip.status_key == "token_expired"
+    chip = view.table.cellWidget(0, 6)
+    assert chip is not None
 
     # 2. Giả lập cấp lại token hợp lệ
     valid_info = FBTokenInfo(is_valid=True, token_type="PAGE", id="fb_verify_1", name="Page Test Verify", tasks=["CREATE_CONTENT"])

@@ -209,7 +209,8 @@ def test_bulk_import_export_template(qapp, temp_db, tmp_path):
 
     out_csv = tmp_path / "Mau_Test.csv"
     with patch.object(QFileDialog, "getSaveFileName", return_value=(str(out_csv), "")), \
-         patch.object(QMessageBox, "information"):
+         patch.object(QMessageBox, "information"), \
+         patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
         dlg._export_template()
 
     assert out_csv.exists()

@@ -78,7 +78,9 @@ class PageRepository:
         token_key = f"fb_token_{page_id}"
         self.vault.set_secret(token_key, raw_token)
 
-        tasks_json = json.dumps(tasks or ["CREATE_CONTENT", "MANAGE"])
+        # Important: [] means no permission has been proven. Do not fabricate
+        # CREATE_CONTENT/MANAGE, which can make an unverified Page look ready.
+        tasks_json = json.dumps(tasks if tasks is not None else [])
         acc_id = account_id or f"acc_direct_{page_id}"
 
         # Đảm bảo account_id tồn tại

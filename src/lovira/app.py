@@ -175,8 +175,18 @@ def create_application() -> MainWindow:
         media_repo=media_repo,
         media_processor=media_processor,
         download_dir=paths.downloads_dir,
+        page_repo=page_repo,
+        queue_repo=queue_repo,
     )
-    view_composer = PostComposerView(page_repo=page_repo, queue_repo=queue_repo)
+    view_composer = PostComposerView(
+        page_repo=page_repo,
+        queue_repo=queue_repo,
+        media_repo=media_repo,
+        downloader=downloader,
+        media_processor=media_processor,
+        download_dir=paths.downloads_dir,
+    )
+
     view_schedule = ScheduleWorkspaceView(
         db_manager=db_manager,
         queue_repo=queue_repo,
@@ -293,6 +303,8 @@ def create_application() -> MainWindow:
         nav.navigate_to(Route.COMPOSER)
 
     view_video.send_to_composer.connect(on_video_sent_to_composer)
+    view_video.batch_schedule_created.connect(lambda _: view_schedule.reload_schedules())
+    view_video.batch_schedule_created.connect(lambda _: view_overview.reload_dashboard_data())
     view_video.tab_download.media_downloaded.connect(view_overview.reload_dashboard_data)
 
     # Khi có bài viết được thêm vào hàng đợi -> Làm mới danh sách lịch và dashboard

@@ -1,487 +1,1199 @@
+"""Lovira Workspace 2.1 — Fanpage Manager (PySide6 desktop).
+
+Compact, information-rich Page list; lazy public data enrichment; detail dialog;
+replace/verify token; safe disconnect. Requires accompanying page_profiles.py and
+page_enrichment.py in this package. Does NOT expose token contents in the UI.
 """
-Lovira Workspace 2.0 — Fanpage Workspace (pages_workspace.py)
-Quản lý Fanpage, Nhóm & Kết nối Facebook Graph API (Mockup 02_fanpage.png):
-- Kết nối Fanpage qua 2 luồng: Nhập trực tiếp Page ID + Page Token hoặc Quét từ User Token
-- Kiểm toán quyền hạn bảo mật: Phân biệt ready, unverified, insufficient_permissions, token_expired (A-06)
-- Bảng Fanpage nâng cao tích hợp StatusChip, sao chép ID nhanh và EmptyState onboarding
-- Kiểm tra sức khỏe token trực tiếp (Verify Token Health)
-- Cảnh báo an toàn tác động lịch đăng local & remote khi gỡ liên kết (AC-11)
-"""
+from __future__ import annotations
 
 import logging
-from typing import Optional, Dict, Any, List
-from PySide6.QtCore import Qt, Signal
+from datetime import datetime, timezone, timedelta
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+
+from PySide6.QtCore import Qt, QObject, Signal, QRunnable, QThreadPool, QUrl
+from PySide6.QtGui import QPixmap, QDesktopServices
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
-    QPushButton,
-    QLabel,
-    QLineEdit,
-    QDialog,
-    QMessageBox,
-    QFrame,
-    QTabWidget,
-    QStackedLayout,
+    QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
+    QLineEdit, QComboBox, QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
+    QStackedWidget, QListWidget, QListWidgetItem, QMessageBox, QFrame, QScrollArea,
+    QCheckBox, QAbstractItemView, QDialogButtonBox, QStyle,
 )
+
 from src.lovira.storage.page_repository import PageRepository
+from src.lovira.storage.page_profiles import PageProfileStore
 from src.lovira.integrations.facebook.client import FacebookGraphClient
-from src.lovira.ui.design.icons import get_icon
-from src.lovira.ui.widgets.status_chip import StatusChip
-from src.lovira.ui.widgets.empty_state import EmptyState
-from src.lovira.ui.widgets.feedback import FeedbackBanner
-from src.lovira.domain.timezone import format_vn_display
+from src.lovira.integrations.facebook.page_enrichment import PageEnrichmentClient, GraphRequestError
 
 logger = logging.getLogger(__name__)
+VN = timezone(timedelta(hours=7))
+
+COLORS = {
+    "bg": "#0C1424", "surface": "#162339", "field": "#1D2D47",
+    "border": "#2B3E5B", "text": "#EFF5FF", "muted": "#9CAEC7",
+    "blue": "#766BFC", "green": "#31C796", "red": "#FA7785", "amber": "#F3BA63",
+}
+
+STYLE = """
+QWidget#FanpageWorkspace { background: transparent; }
+QFrame#SummaryCard, QFrame#FanpagePanel, QFrame#DetailsCard {
+    background: #162339; border: 1px solid #2B3E5B; border-radius: 11px;
+}
+QLabel#PageHeading { color: #EFF5FF; font-size: 20px; font-weight: 750; }
+QLabel#Secondary { color: #9CAEC7; font-size: 12px; }
+QLabel#CardNumber { color: #EFF5FF; font-size: 23px; font-weight: 800; }
+QLineEdit, QComboBox {
+    background: #1D2D47; color: #EFF5FF; border: 1px solid #314563;
+    border-radius: 8px; padding: 8px 11px; min-height: 23px;
+}
+QLineEdit:focus, QComboBox:focus { border: 1px solid #8177FF; }
+QPushButton { background: #263955; color: #EAF0FB; border: 1px solid #314563;
+    border-radius: 8px; padding: 8px 12px; min-height: 23px; }
+QPushButton:hover { background: #304463; }
+QPushButton:disabled { color: #73839D; background: #1D2B40; }
+QPushButton#PrimaryButton { background: #6558E8; border: 1px solid #7468F7; color: white; font-weight: 650; }
+QPushButton#PrimaryButton:hover { background: #756BFB; }
+QPushButton#DangerButton { background: #54303A; border: 1px solid #87414D; color: #FFA4B0; }
+QPushButton#DangerButton:hover { background: #663741; }
+QPushButton#LinkButton { background: transparent; border: none; color: #AFA9FF;
+    padding: 0; text-align: left; }
+QPushButton#LinkButton:hover { color: #D3D0FF; }
+QTableWidget { background: #162339; color: #EAF0FB;
+    alternate-background-color: #1A2942; border: 1px solid #2B3E5B;
+    border-radius: 10px; gridline-color: transparent; selection-background-color: #243A59;
+    selection-color: #FFFFFF; }
+QTableWidget QWidget { background: transparent; }
+QHeaderView::section { background: #111C30; color: #A9B9D0; font-size: 11px;
+    font-weight: 650; border: 0; border-bottom: 1px solid #314563; padding: 11px 9px; }
+QTableWidget::item { padding: 7px; border-bottom: 1px solid #263852; background: transparent; }
+QTableWidget::item:selected { background: #243A59; }
+QTabWidget::pane { border: 1px solid #2B3E5B; border-radius: 8px; }
+QTabBar::tab { background: #182740; color: #AFC0D9; padding: 9px 15px; }
+QTabBar::tab:selected { background: #6558E8; color: white; }
+QListWidget { background: #192940; color: #EFF5FF; border: 1px solid #344662; }
+QScrollArea { border: none; background: transparent; }
+"""
 
 
-class ConnectPageDialog(QDialog):
-    """Hộp thoại kết nối Fanpage mới (Hỗ trợ 2 Tab: Page ID + Token hoặc Quét tự động)."""
+def txt(value: Any, fallback: str = "—") -> str:
+    if value is None or value == "":
+        return fallback
+    return str(value)
 
-    def __init__(self, fb_client: FacebookGraphClient, page_repo: PageRepository, parent: Optional[QWidget] = None):
+
+def label(value: Any, *, color: str = "", size: int = 12, bold: bool = False) -> QLabel:
+    result = QLabel(txt(value, ""))
+    result.setTextFormat(Qt.TextFormat.PlainText)  # Page names cannot inject rich text.
+    result.setWordWrap(True)
+    result.setStyleSheet(f"color: {color or COLORS['text']}; font-size: {size}px;"
+                         + ("font-weight: 650;" if bold else ""))
+    return result
+
+
+def nice_number(value: Any) -> str:
+    if value is None or value == "":
+        return "—"
+    try:
+        return f"{int(value):,}".replace(",", ".")
+    except (TypeError, ValueError):
+        return "—"
+
+
+def human_dt(value: Any) -> str:
+    if value is None or value == "":
+        return "Chưa xác định"
+    try:
+        if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
+            moment = datetime.fromtimestamp(int(value), tz=timezone.utc)
+        else:
+            source = str(value).strip().replace("Z", "+00:00")
+            moment = datetime.fromisoformat(source)
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+        return moment.astimezone(VN).strftime("%d/%m/%Y %H:%M")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "Chưa xác định"
+
+
+def expiry_text(value: Any) -> str:
+    if value is None or value == "":
+        return "Chưa xác định"
+    if str(value) == "0":
+        return "Không có hạn cố định*"
+    try:
+        seconds = int(value)
+        until = datetime.fromtimestamp(seconds, tz=timezone.utc) - datetime.now(timezone.utc)
+        if until.total_seconds() < 0:
+            return "Đã quá hạn"
+        if until.total_seconds() < 24 * 3600:
+            return f"Còn {max(1, int((until.total_seconds() + 3599) // 3600))} giờ"
+        if until.days < 7:
+            return f"Còn {max(1, until.days)} ngày"
+        return human_dt(value).split(" ")[0]
+    except (ValueError, TypeError, OverflowError, OSError):
+        return human_dt(value)
+
+
+STATUS = {
+    "ready": ("Sẵn sàng", "#1D634F", "#A8F0D4"),
+    "unverified": ("Chưa xác minh", "#62502C", "#FFDB9E"),
+    "insufficient_permissions": ("Thiếu quyền", "#62502C", "#FFDB9E"),
+    "token_expired": ("Token lỗi / hết hạn", "#6A3544", "#FFC2C8"),
+}
+
+
+def status_badge(status: str) -> QLabel:
+    name, bg, fg = STATUS.get(status, ("Chưa rõ", "#3D4B61", "#D2DBEC"))
+    chip = label(name, color=fg, size=11, bold=True)
+    chip.setStyleSheet(f"background: {bg}; border-radius: 9px; padding: 6px 10px;"
+                       f"color: {fg}; font-size: 11px; font-weight: 700;")
+    chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    return chip
+
+
+def valid_https(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme == "https" and bool(parsed.netloc) and not parsed.username
+    except ValueError:
+        return False
+
+
+class _JobSignals(QObject):
+    done = Signal(object, object)
+
+
+class _Job(QRunnable):
+    def __init__(self, work: Callable[[], Any]):
+        super().__init__()
+        self.work = work
+        self.signals = _JobSignals()
+        self.setAutoDelete(False)
+
+    def run(self):
+        try:
+            value = self.work()
+            self.signals.done.emit(value, None)
+        except Exception as exc:
+            # GraphRequestError messages are sanitized by the service.
+            safe = str(exc) if isinstance(exc, GraphRequestError) else "Có lỗi nội bộ khi xử lý yêu cầu."
+            if isinstance(exc, GraphRequestError):
+                logger.warning("Graph operation failed (kind=%s, code=%s)", exc.kind, exc.code)
+            else:
+                logger.exception("Unexpected Fanpage worker failure (%s)", type(exc).__name__)
+            self.signals.done.emit(None, safe)
+
+
+class BackgroundOwner:
+    """Mixin for Qt widgets; all completion callbacks run in the GUI thread."""
+    def start_task(self, work: Callable[[], Any], callback: Callable[[Any, Optional[str]], None]):
+        if not hasattr(self, "_active_jobs"):
+            self._active_jobs = set()
+        job = _Job(work)
+        self._active_jobs.add(job)
+
+        def finished(value, error):
+            self._active_jobs.discard(job)
+            callback(value, error)
+
+        job.signals.done.connect(finished, Qt.ConnectionType.QueuedConnection)
+        QThreadPool.globalInstance().start(job)
+
+
+class AvatarLabel(QLabel):
+    def __init__(self, page_name: str, size: int = 42):
+        super().__init__()
+        self.size_px = size
+        self.setFixedSize(size, size)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setText((page_name[:1] or "F").upper())
+        self.setStyleSheet(f"background: #394A71; border: 1px solid #536894;"
+                           f"border-radius: {size // 2}px; color: #E9EDFF;"
+                           f"font-weight: 750; font-size: {max(15, size // 3)}px;")
+
+    def apply_data(self, data: bytes):
+        image = QPixmap()
+        if image.loadFromData(data) and not image.isNull():
+            self.setPixmap(image.scaled(self.size_px, self.size_px,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation))
+
+
+class CoverLabel(QLabel):
+    def __init__(self):
+        super().__init__()
+        self.setFixedHeight(115)
+        self.setMinimumWidth(300)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("background: #253854; border-radius: 9px;")
+
+    def apply_data(self, data: bytes):
+        bitmap = QPixmap()
+        if bitmap.loadFromData(data) and not bitmap.isNull():
+            self.setPixmap(bitmap.scaled(max(300, self.width()), self.height(),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation))
+
+
+class _PageSelectionDialog(QDialog):
+    def __init__(self, pages: List[Dict[str, Any]], parent=None):
+        super().__init__(parent)
+        self.pages = pages
+        self.setWindowTitle("Chọn Fanpage cần kết nối")
+        self.setMinimumSize(500, 400)
+        self.setStyleSheet(STYLE)
+        box = QVBoxLayout(self)
+        box.addWidget(label(f"Tìm thấy {len(pages)} Fanpage. Chọn Page muốn thêm vào Lovira.", color=COLORS["muted"]))
+        self.listing = QListWidget()
+        for p in pages:
+            item = QListWidgetItem(f"{p['name']}   ·   {p['page_id']}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            self.listing.addItem(item)
+        box.addWidget(self.listing)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Thêm các Page đã chọn")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        box.addWidget(buttons)
+
+    def selected(self) -> List[Dict[str, Any]]:
+        return [p for i, p in enumerate(self.pages)
+                if self.listing.item(i).checkState() == Qt.CheckState.Checked]
+
+
+class ConnectPageDialog(QDialog, BackgroundOwner):
+    """Connect a new Page or scan selectable Pages from a User token."""
+    def __init__(self, fb_client: FacebookGraphClient, page_repo: PageRepository, parent=None):
         super().__init__(parent)
         self.fb = fb_client
         self.repo = page_repo
-        self.setWindowTitle("Kết nối Fanpage mới — Lovira Workspace 2.0")
-        self.setFixedWidth(560)
-        self._init_ui()
-
-    def _init_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(14)
-
-        # Header Dialog
-        header_row = QHBoxLayout()
-        icon_lbl = QLabel()
-        icon_lbl.setPixmap(get_icon("pages", "#6258E8", 22).pixmap(22, 22))
-        header_row.addWidget(icon_lbl)
-
-        title_lbl = QLabel("KẾT NỐI FANPAGE FACEBOOK")
-        title_lbl.setStyleSheet("font-size: 15px; font-weight: 700; color: #F3F6FC; letter-spacing: 0.5px;")
-        header_row.addWidget(title_lbl)
-        header_row.addStretch()
-        layout.addLayout(header_row)
-
-        desc_lbl = QLabel("Liên kết Fanpage để thực hiện soạn bài, lập lịch đăng Reels và quản lý tương tác tự động.")
-        desc_lbl.setStyleSheet("font-size: 12px; color: #94A3B8;")
-        desc_lbl.setWordWrap(True)
-        layout.addWidget(desc_lbl)
-
-        # Tab Widget cho 2 phương thức kết nối
-        self.tab_widget = QTabWidget()
-
-        # TAB 1: Nhập trực tiếp Page ID & Page Access Token
-        tab_page_id = QWidget()
-        page_id_layout = QVBoxLayout(tab_page_id)
-        page_id_layout.setContentsMargins(14, 14, 14, 14)
-        page_id_layout.setSpacing(10)
-
-        desc1 = QLabel(
-            "Phương thức khuyến nghị khi bạn đã có Page ID và Page Access Token vĩnh viễn (System User hoặc Page Token)."
-        )
-        desc1.setStyleSheet("color: #A9B8CF; font-size: 11px;")
-        desc1.setWordWrap(True)
-        page_id_layout.addWidget(desc1)
-
-        page_id_layout.addWidget(QLabel("Facebook Page ID (Bắt buộc):"))
+        self.service = PageEnrichmentClient(fb_client)
+        self.connections: List[Dict[str, Any]] = []
+        self.setWindowTitle("Kết nối Fanpage • Lovira")
+        self.setMinimumWidth(530)
+        self.setStyleSheet(STYLE)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 22, 22, 22)
+        root.setSpacing(12)
+        root.addWidget(label("KẾT NỐI FANPAGE FACEBOOK", size=16, bold=True))
+        root.addWidget(label("Token được mã hóa bằng SecretVault; không hiển thị lại sau khi lưu.",
+                             color=COLORS["muted"]))
+        tabs = QTabWidget()
+        self.tabs = tabs
+        page_tab = QWidget()
+        a = QVBoxLayout(page_tab)
+        a.addWidget(label("Page ID", bold=True))
         self.input_page_id = QLineEdit()
-        self.input_page_id.setPlaceholderText("Ví dụ: 100085942398412 hoặc ID số của Fanpage...")
-        page_id_layout.addWidget(self.input_page_id)
-
-        page_id_layout.addWidget(QLabel("Tên Fanpage (Gợi nhớ, tùy chọn):"))
-        self.input_page_name = QLineEdit()
-        self.input_page_name.setPlaceholderText("Ví dụ: Lovira Official, Shop Mỹ Phẩm...")
-        page_id_layout.addWidget(self.input_page_name)
-
-        page_id_layout.addWidget(QLabel("Page Access Token (Bắt đầu bằng EAA...):"))
+        self.input_page_id.setPlaceholderText("Dán ID số của Fanpage")
+        a.addWidget(self.input_page_id)
+        a.addWidget(label("Page Access Token", bold=True))
         self.input_page_token = QLineEdit()
-        self.input_page_token.setPlaceholderText("Dán mã Page Access Token vào đây...")
-        page_id_layout.addWidget(self.input_page_token)
+        self.input_page_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_page_token.setPlaceholderText("Dán Page token • trường bảo mật")
+        a.addWidget(self.input_page_token)
+        a.addWidget(label("Chỉ lưu sau khi xác thực Page ID; không tự gán quyền đăng bài.",
+                          color=COLORS["muted"]))
+        tabs.addTab(page_tab, "Page ID + Token")
 
-        self.tab_widget.addTab(tab_page_id, "📌 Nhập Page ID & Token")
-
-        # TAB 2: Quét tự động từ User Access Token
-        tab_user_token = QWidget()
-        user_layout = QVBoxLayout(tab_user_token)
-        user_layout.setContentsMargins(14, 14, 14, 14)
-        user_layout.setSpacing(10)
-
-        desc2 = QLabel(
-            "Dán mã User Access Token (cấp quyền quản lý Fanpage).\n"
-            "Hệ thống sẽ tự động quét toàn bộ danh sách các Fanpage thuộc quyền quản lý của bạn."
-        )
-        desc2.setStyleSheet("color: #A9B8CF; font-size: 11px;")
-        desc2.setWordWrap(True)
-        user_layout.addWidget(desc2)
-
-        user_layout.addWidget(QLabel("User Access Token (Bắt đầu bằng EAA...):"))
+        user_tab = QWidget()
+        b = QVBoxLayout(user_tab)
+        b.addWidget(label("User Access Token", bold=True))
         self.input_user_token = QLineEdit()
-        self.input_user_token.setPlaceholderText("Dán mã User Access Token vào đây...")
-        user_layout.addWidget(self.input_user_token)
-        user_layout.addStretch()
+        self.input_user_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_user_token.setPlaceholderText("Dán User token để tìm các Fanpage quản lý")
+        b.addWidget(self.input_user_token)
+        b.addWidget(label("Lovira sẽ hiển thị danh sách để bạn chọn, không tự kết nối tất cả Page.",
+                          color=COLORS["muted"]))
+        tabs.addTab(user_tab, "Quét từ User Token")
+        self.token_input = self.input_user_token  # Legacy alias for other modules.
+        root.addWidget(tabs)
+        self.message = label("", color=COLORS["amber"])
+        root.addWidget(self.message)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel = QPushButton("Đóng")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        self.connect_button = QPushButton("Kiểm tra và kết nối")
+        self.connect_button.setObjectName("PrimaryButton")
+        self.connect_button.clicked.connect(self._connect)
+        buttons.addWidget(self.connect_button)
+        root.addLayout(buttons)
 
-        # Alias tương thích ngược
-        self.token_input = self.input_user_token
-
-        self.tab_widget.addTab(tab_user_token, "🔍 Quét tự động từ User Token")
-        layout.addWidget(self.tab_widget)
-
-        # Nút điều khiển
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
-        self.btn_cancel = QPushButton("Hủy")
-        self.btn_cancel.clicked.connect(self.reject)
-
-        self.btn_connect = QPushButton("Xác thực và Kết nối")
-        self.btn_connect.setObjectName("primaryButton")
-        self.btn_connect.clicked.connect(self._handle_connect)
-
-        btn_row.addStretch()
-        btn_row.addWidget(self.btn_cancel)
-        btn_row.addWidget(self.btn_connect)
-        layout.addLayout(btn_row)
-
-    def _handle_connect(self) -> None:
-        current_tab = self.tab_widget.currentIndex()
-        if current_tab == 0 and not self.input_page_id.text().strip() and self.input_user_token.text().strip():
-            current_tab = 1
-
-        if current_tab == 0:
-            # Tab 1: Kết nối bằng Page ID + Page Token
-            page_id = self.input_page_id.text().strip()
-            token = self.input_page_token.text().strip()
-            custom_name = self.input_page_name.text().strip()
-
-            if not page_id or not token:
-                QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập đầy đủ Facebook Page ID và Page Access Token.")
-                return
-
-            self.btn_connect.setEnabled(False)
-            self.btn_connect.setText("Đang kết nối...")
-
-            # Thử inspect token qua Graph API (UX-01 P0 safety check)
-            token_info = self.fb.inspect_token(token)
-            resolved_name = custom_name or f"Fanpage {page_id}"
-
-            if token_info and token_info.is_valid:
-                if token_info.name:
-                    resolved_name = custom_name or token_info.name
-                tasks = token_info.tasks if token_info.tasks else ["MANAGE", "CREATE_CONTENT"]
-                has_publish_perm = any(t in ["CREATE_CONTENT", "MANAGE", "PUBLISH_TO_PAGE"] for t in tasks)
-                status = "ready" if has_publish_perm else "insufficient_permissions"
-
-                pid = self.repo.upsert_page(
-                    facebook_page_id=page_id,
-                    name=resolved_name,
-                    status=status,
-                )
-                self.repo.save_page_token(pid, token, tasks=tasks)
-
-                if status == "ready":
-                    QMessageBox.information(
-                        self,
-                        "Kết nối thành công",
-                        f"Đã xác thực và liên kết Fanpage thành công!\n• Tên Page: {resolved_name}\n• Page ID: {page_id}\n• Trạng thái: Sẵn sàng",
-                    )
-                else:
-                    QMessageBox.warning(
-                        self,
-                        "Thiếu quyền đăng bài",
-                        f"Đã lưu Fanpage nhưng Access Token thiếu quyền tạo nội dung (CREATE_CONTENT).\n• Tên Page: {resolved_name}\n• Trạng thái: Thiếu quyền",
-                    )
-                self.accept()
-            else:
-                # Không xác thực được hoặc token không hợp lệ -> CẤM lưu status='ready' (A-06)
-                pid = self.repo.upsert_page(
-                    facebook_page_id=page_id,
-                    name=resolved_name,
-                    status="unverified",
-                )
-                self.repo.save_page_token(pid, token, tasks=[])
-                QMessageBox.warning(
-                    self,
-                    "Chưa xác thực được Token",
-                    f"Không thể xác thực Access Token với Facebook (lỗi mạng hoặc token không hợp lệ).\n"
-                    f"Fanpage được lưu ở trạng thái 'Chưa xác minh' (unverified) và KHÔNG THỂ đăng bài cho đến khi kết nối lại thành công.",
-                )
-                self.accept()
-
-        else:
-            # Tab 2: Quét tự động từ User Token
-            user_token = self.input_user_token.text().strip()
-            if not user_token:
-                QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập User Access Token.")
-                return
-
-            self.btn_connect.setEnabled(False)
-            self.btn_connect.setText("Đang quét Fanpage...")
-
-            token_info = self.fb.inspect_token(user_token)
-            if token_info and token_info.is_valid:
-                if token_info.token_type == "PAGE":
+    def _handle_connect(self):
+        user_token = self.input_user_token.text().strip()
+        if user_token and hasattr(self, "fb"):
+            try:
+                res = self.fb.inspect_token(user_token)
+                if res and getattr(res, "is_valid", False) and getattr(res, "token_type", "") == "PAGE":
                     pid = self.repo.upsert_page(
-                        facebook_page_id=token_info.id,
-                        name=token_info.name,
+                        facebook_page_id=res.id,
+                        name=res.name,
                         status="ready",
                     )
-                    self.repo.save_page_token(pid, user_token, tasks=token_info.tasks)
-                    QMessageBox.information(
-                        self,
-                        "Kết nối thành công",
-                        f"Đã kết nối trực tiếp Page Token thành công!\n• Tên Page: {token_info.name}\n• ID: {token_info.id}",
-                    )
+                    self.repo.save_page_token(pid, user_token, tasks=getattr(res, "tasks", []))
                     self.accept()
                     return
+            except Exception:
+                pass
+        self._connect()
 
-                elif token_info.token_type == "USER" and token_info.pages:
-                    added_count = 0
-                    for p in token_info.pages:
-                        pid = self.repo.upsert_page(
-                            facebook_page_id=p.page_id,
-                            name=p.name,
-                            status="ready",
-                        )
-                        if p.access_token:
-                            self.repo.save_page_token(pid, p.access_token, tasks=p.tasks)
-                        added_count += 1
+    def _connect(self):
+        self.message.setText("")
+        mode = self.tabs.currentIndex()
+        if mode == 0:
+            page_id = self.input_page_id.text().strip()
+            token = self.input_page_token.text().strip()
+            if not page_id.isdigit() or not token:
+                self.message.setText("Cần nhập Page ID dạng số và Page Access Token.")
+                return
+            def work():
+                audit = self.service.inspect_page_token(page_id, token, [])
+                if not audit.get("is_valid"):
+                    raise GraphRequestError(audit.get("error", "Token không hợp lệ"))
+                try:
+                    public = self.service.fetch_public_info(page_id, token)
+                except GraphRequestError:
+                    public = {"name": audit.get("name") or f"Fanpage {page_id}"}
+                return [{"page_id": page_id, "name": public.get("name") or audit.get("name"),
+                         "token": token, "tasks": [], "public": public, "audit": audit}]
+        else:
+            user_token = self.input_user_token.text().strip()
+            if not user_token:
+                self.message.setText("Vui lòng nhập User Access Token.")
+                return
+            def work():
+                return self.service.scan_user_pages(user_token)
+        self.tabs.setDisabled(True)
+        self.connect_button.setDisabled(True)
+        self.connect_button.setText("Đang liên hệ Facebook...")
 
-                    QMessageBox.information(
-                        self,
-                        "Kết nối thành công",
-                        f"Đã kết nối tài khoản Facebook {token_info.name} thành công!\n• Đã tìm thấy và liên kết {added_count} Fanpage.",
-                    )
-                    self.accept()
+        def completed(value, error):
+            if not self.isVisible():
+                return  # User closed dialog during request.
+            self.connect_button.setEnabled(True)
+            self.tabs.setEnabled(True)
+            self.connect_button.setText("Kiểm tra và kết nối")
+            if error:
+                self.message.setText(error)
+                return
+            if mode == 0:
+                self.connections = value
+                self.input_page_token.clear()
+                self.accept()
+                return
+            if not value:
+                self.message.setText("Không tìm thấy Page nào có quyền truy cập, hãy kiểm tra quyền pages_show_list.")
+                return
+            picker = _PageSelectionDialog(value, self)
+            if picker.exec() != QDialog.DialogCode.Accepted:
+                return
+            selected = picker.selected()
+            if not selected:
+                self.message.setText("Bạn chưa chọn Fanpage nào.")
+                return
+            self.connect_button.setDisabled(True)
+            self.message.setText(f"Đang xác minh {len(selected)} Page đã chọn...")
+
+            def verify_selection():
+                accepted = []
+                rejected = 0
+                for p in selected:
+                    try:
+                        audit = self.service.inspect_page_token(p["page_id"], p["token"], p["tasks"])
+                        if not audit.get("is_valid"):
+                            rejected += 1
+                            continue
+                        accepted.append({**p, "public": {
+                            "name": p["name"], "category": p.get("category"),
+                            "avatar_url": p.get("avatar_url"),
+                            "link": f"https://www.facebook.com/{p['page_id']}"},
+                            "audit": audit})
+                    except GraphRequestError:
+                        rejected += 1
+                return accepted, rejected
+
+            def verify_done(result, verify_error):
+                if not self.isVisible():
                     return
+                self.connect_button.setEnabled(True)
+                if verify_error:
+                    self.message.setText(verify_error)
+                    return
+                self.connections, failures = result
+                if not self.connections:
+                    self.message.setText("Không có Page nào xác minh thành công. Token cũ vẫn được giữ nguyên.")
+                    return
+                self.input_user_token.clear()
+                if failures:
+                    QMessageBox.warning(self, "Một số Page bị bỏ qua",
+                                        f"{failures} Page không xác minh được; chỉ lưu Page hợp lệ.")
+                self.accept()
+            self.start_task(verify_selection, verify_done)
 
-            self.btn_connect.setEnabled(True)
-            self.btn_connect.setText("Xác thực và Kết nối")
-            QMessageBox.critical(
-                self,
-                "Kết nối thất bại (AC-20)",
-                "Mã Access Token không hợp lệ hoặc không có quyền quản lý Fanpage nào.\nVui lòng kiểm tra lại token hoặc chuyển sang Tab 'Nhập Page ID và Token'.",
-            )
+        self.start_task(work, completed)
 
 
-class PagesWorkspaceView(QWidget):
-    """Màn hình Quản lý Fanpage 2.0 (Workspace)."""
+class NewTokenDialog(QDialog):
+    def __init__(self, page_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Thay Page Access Token")
+        self.setMinimumWidth(480)
+        self.setStyleSheet(STYLE)
+        box = QVBoxLayout(self)
+        box.setSpacing(11)
+        box.addWidget(label("THAY TOKEN KẾT NỐI", size=16, bold=True))
+        box.addWidget(label(f"Fanpage: {page_name}"))
+        box.addWidget(label("Token cũ sẽ được giữ cho đến khi token mới được xác minh đúng Page ID.",
+                            color=COLORS["muted"]))
+        self.token_line = QLineEdit()
+        self.token_line.setEchoMode(QLineEdit.EchoMode.Password)
+        self.token_line.setPlaceholderText("Dán Page Access Token mới")
+        box.addWidget(self.token_line)
+        reveal = QCheckBox("Hiện token khi đang nhập")
+        reveal.toggled.connect(lambda x: self.token_line.setEchoMode(
+            QLineEdit.EchoMode.Normal if x else QLineEdit.EchoMode.Password))
+        box.addWidget(reveal)
+        row = QHBoxLayout()
+        row.addStretch()
+        cancel = QPushButton("Hủy")
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        done = QPushButton("Xác minh và thay token")
+        done.setObjectName("PrimaryButton")
+        done.clicked.connect(self._accept_if_valid)
+        row.addWidget(done)
+        box.addLayout(row)
 
+    def _accept_if_valid(self):
+        if not self.token_line.text().strip():
+            QMessageBox.warning(self, "Thiếu token", "Vui lòng dán token mới.")
+        else:
+            self.accept()
+
+    def value(self) -> str:
+        result = self.token_line.text().strip()
+        self.token_line.clear()
+        return result
+
+
+class PageDetailsDialog(QDialog):
+    """Click Page name/Details; no access-token string is ever displayed."""
+    def __init__(self, view: "PagesWorkspaceView", page_id: str):
+        super().__init__(view)
+        self.view = view
+        self.page_id = page_id
+        self.setWindowTitle("Chi tiết Fanpage • Lovira")
+        self.resize(690, 645)
+        self.setMinimumWidth(590)
+        self.setStyleSheet(STYLE)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(12)
+        self.title = label("", size=18, bold=True)
+        self.id_text = label("", color=COLORS["muted"])
+        self.big_avatar = AvatarLabel("F", 70)
+        top = QHBoxLayout()
+        top.setSpacing(14)
+        top.addWidget(self.big_avatar)
+        name_col = QVBoxLayout()
+        name_col.addWidget(self.title)
+        name_col.addWidget(self.id_text)
+        top.addLayout(name_col, 1)
+        root.addLayout(top)
+        self.cover = CoverLabel()
+        self.cover.hide()
+        root.addWidget(self.cover)
+        self.state = label("")
+        root.addWidget(self.state)
+
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        content = QWidget()
+        self.info_layout = QVBoxLayout(content)
+        self.info_layout.setSpacing(9)
+        area.setWidget(content)
+        root.addWidget(area, 1)
+        controls = QHBoxLayout()
+        self.btn_open = QPushButton("Mở Facebook ↗")
+        self.btn_open.clicked.connect(lambda: self.view.open_link(self.page_id))
+        controls.addWidget(self.btn_open)
+        self.btn_refresh = QPushButton("Cập nhật dữ liệu")
+        self.btn_refresh.clicked.connect(lambda: self.view.sync_pages([self.page_id]))
+        controls.addWidget(self.btn_refresh)
+        controls.addStretch()
+        self.btn_verify = QPushButton("Kiểm tra token")
+        self.btn_verify.clicked.connect(lambda: self.view.verify_token(self.page_id))
+        controls.addWidget(self.btn_verify)
+        root.addLayout(controls)
+        foot = QHBoxLayout()
+        self.btn_unlink = QPushButton("Hủy kết nối")
+        self.btn_unlink.setObjectName("DangerButton")
+        self.btn_unlink.clicked.connect(lambda: self.view.disconnect_page(self.page_id))
+        foot.addWidget(self.btn_unlink)
+        foot.addStretch()
+        self.btn_token = QPushButton("Nhập token mới")
+        self.btn_token.setObjectName("PrimaryButton")
+        self.btn_token.clicked.connect(lambda: self.view.replace_token(self.page_id))
+        foot.addWidget(self.btn_token)
+        root.addLayout(foot)
+        self.reload()
+
+    def _clear_fields(self):
+        while self.info_layout.count():
+            item = self.info_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+            elif item.layout() is not None:
+                while item.layout().count():
+                    inner = item.layout().takeAt(0)
+                    if inner.widget():
+                        inner.widget().deleteLater()
+
+    def reload(self):
+        page = self.view.lookup_page(self.page_id)
+        if not page:
+            self.reject()
+            return
+        public = page.get("profile", {}).get("public", {})
+        token = page.get("profile", {}).get("token", {})
+        self.title.setText(txt(page.get("name")))
+        self.id_text.setText(f"Facebook Page ID: {page.get('facebook_page_id', '')}")
+        self.state.setText(f"Trạng thái: {STATUS.get(page.get('status'), ('Chưa rõ',))[0]}")
+        self.view.load_avatar(self.big_avatar, public.get("avatar_url") or page.get("avatar_url") or "")
+        cover_url = public.get("cover_url") or ""
+        self.cover.setVisible(valid_https(cover_url))
+        if valid_https(cover_url):
+            self.view.load_avatar(self.cover, cover_url)
+        self._clear_fields()
+        pairs = [
+            ("Danh mục", public.get("category")),
+            ("Tên người dùng", public.get("username")),
+            ("Người theo dõi", nice_number(public.get("followers_count"))),
+            ("Lượt thích Page*", nice_number(public.get("fan_count"))),
+            ("Facebook URL", public.get("link") or f"https://www.facebook.com/{page['facebook_page_id']}"),
+            ("Website", public.get("website")),
+            ("Số điện thoại", public.get("phone")),
+            ("Xác minh Facebook", public.get("verification_status")),
+            ("Giới thiệu", public.get("about")),
+            ("Hạn Access Token", expiry_text(token.get("expires_at"))),
+            ("Thời điểm hết hạn cụ thể", human_dt(token.get("expires_at")) if str(token.get("expires_at")) != "0" else "Không có hạn cố định; vẫn có thể bị thu hồi"),
+            ("Hạn quyền truy cập dữ liệu", human_dt(token.get("data_access_expires_at"))),
+            ("Quyền Graph API", ", ".join(token.get("scopes") or []) or "Chưa kiểm tra"),
+            ("Tác vụ Page", ", ".join(token.get("tasks") or []) or "Chưa xác minh"),
+            ("Kiểm tra token gần nhất", human_dt(page.get("profile", {}).get("token_checked_at"))),
+            ("Cập nhật thông tin công khai", human_dt(page.get("profile", {}).get("public_checked_at"))),
+            ("Kiểm tra số liệu follow/like", human_dt(public.get("metrics_checked_at"))),
+            ("Ghi chú kiểm tra", token.get("error") or "—"),
+        ]
+        for title, value in pairs:
+            frame = QFrame()
+            frame.setObjectName("DetailsCard")
+            row = QHBoxLayout(frame)
+            row.setContentsMargins(12, 9, 12, 9)
+            title_label = label(title, color=COLORS["muted"], size=11)
+            title_label.setMinimumWidth(186)
+            row.addWidget(title_label)
+            val = label(txt(value), size=12)
+            val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            row.addWidget(val, 1)
+            self.info_layout.addWidget(frame)
+        self.info_layout.addWidget(label(
+            "Thông tin follow/like có thể là dữ liệu lưu lần kiểm tra trước; "
+            "ngày kiểm tra chỉ số được hiển thị bên trên.", color=COLORS["muted"], size=11))
+        self.info_layout.addWidget(label(
+            "* Với Page New Pages Experience, Meta có thể trả fan_count bằng followers_count."
+            " Token không có hạn cố định vẫn có thể bị thu hồi.", color=COLORS["muted"], size=11))
+        self.info_layout.addStretch()
+
+
+class PagesWorkspaceView(QWidget, BackgroundOwner):
     page_list_changed = Signal()
     bulk_import_requested = Signal()
 
-    def __init__(
-        self,
-        page_repo: PageRepository,
-        fb_client: FacebookGraphClient,
-        parent: Optional[QWidget] = None,
-    ):
+    def __init__(self, page_repo: PageRepository, fb_client: FacebookGraphClient,
+                 parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self.setObjectName("FanpageWorkspace")
+        self.setStyleSheet(STYLE)
         self.repo = page_repo
         self.fb = fb_client
-        self._all_pages: List[Dict[str, Any]] = []
-
-        self._init_ui()
+        self.service = PageEnrichmentClient(fb_client)
+        self.profile_store = PageProfileStore(page_repo.db)
+        self.pages: List[Dict[str, Any]] = []
+        self.dialogs: List[PageDetailsDialog] = []
+        self.avatar_net = QNetworkAccessManager(self)
+        self._avatar_cache: Dict[str, bytes] = {}
+        self._sync_running = False
+        self._token_updates_inflight: set[str] = set()
+        self._token_epoch: Dict[str, int] = {}
+        self._build_ui()
         self.reload_pages()
 
-    def _init_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 24)
-        layout.setSpacing(16)
-
-        # 1. Header Toolbar
-        header_row = QHBoxLayout()
-        header_row.setSpacing(12)
-
-        header_box = QVBoxLayout()
-        header_box.setSpacing(4)
-        title_lbl = QLabel("QUẢN LÝ FANPAGE FACEBOOK")
-        title_lbl.setStyleSheet("font-size: 20px; font-weight: 800; color: #F3F6FC;")
-
-        self.lbl_subtitle = QLabel("Quản lý danh sách kết nối, trạng thái token và quyền đăng bài")
-        self.lbl_subtitle.setStyleSheet("font-size: 13px; color: #94A3B8;")
-        header_box.addWidget(title_lbl)
-        header_box.addWidget(self.lbl_subtitle)
-        header_row.addLayout(header_box)
-
-        header_row.addStretch()
-
-        self.btn_refresh = QPushButton(" Làm mới")
-        self.btn_refresh.setIcon(get_icon("refresh_cw", "#A9B8CF", 14))
-        self.btn_refresh.clicked.connect(self.reload_pages)
-        header_row.addWidget(self.btn_refresh)
-
-        self.btn_bulk_import = QPushButton(" Nhập Excel / CSV")
-        self.btn_bulk_import.setObjectName("successButton")
-        self.btn_bulk_import.setIcon(get_icon("bulk_import", "#FFFFFF", 15))
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(12)
+        heading = QHBoxLayout()
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        h = label("QUẢN LÝ FANPAGE", size=19, bold=True)
+        h.setObjectName("PageHeading")
+        text_col.addWidget(h)
+        self.subtitle = label("Thông tin công khai, kết nối và quyền đăng bài", color=COLORS["muted"])
+        text_col.addWidget(self.subtitle)
+        heading.addLayout(text_col, 1)
+        self.btn_local = QPushButton("Tải lại")
+        self.btn_local.clicked.connect(self.reload_pages)
+        heading.addWidget(self.btn_local)
+        self.btn_sync = QPushButton("Đồng bộ Facebook")
+        self.btn_sync.clicked.connect(self._sync_visible)
+        heading.addWidget(self.btn_sync)
+        self.btn_bulk_import = QPushButton("Nhập Excel / CSV")
         self.btn_bulk_import.clicked.connect(self.bulk_import_requested.emit)
-        header_row.addWidget(self.btn_bulk_import)
-
-        self.btn_add_page = QPushButton(" Kết nối Fanpage mới")
-        self.btn_add_page.setObjectName("primaryButton")
-        self.btn_add_page.setIcon(get_icon("plus", "#FFFFFF", 16))
+        heading.addWidget(self.btn_bulk_import)
+        self.btn_add_page = QPushButton("+ Kết nối Fanpage")
+        self.btn_add_page.setObjectName("PrimaryButton")
         self.btn_add_page.clicked.connect(self._open_connect_dialog)
-        header_row.addWidget(self.btn_add_page)
+        heading.addWidget(self.btn_add_page)
+        root.addLayout(heading)
 
-        layout.addLayout(header_row)
+        stats = QHBoxLayout()
+        self.total_stat = self._stat_card(stats, "TỔNG FANPAGE")
+        self.ready_stat = self._stat_card(stats, "SẴN SÀNG")
+        self.action_stat = self._stat_card(stats, "CẦN KIỂM TRA")
+        root.addLayout(stats)
 
-        # 2. Bộ lọc & Tìm kiếm nhanh
-        filter_frame = QFrame()
-        filter_frame.setObjectName("cardFrame")
-        filter_layout = QHBoxLayout(filter_frame)
-        filter_layout.setContentsMargins(14, 10, 14, 10)
-        filter_layout.setSpacing(12)
-
+        filters = QHBoxLayout()
         self.search_filter = QLineEdit()
-        self.search_filter.setPlaceholderText("🔍 Tìm theo tên Fanpage hoặc Facebook Page ID...")
-        self.search_filter.textChanged.connect(self._apply_table_filter)
-        filter_layout.addWidget(self.search_filter, stretch=1)
+        self.search_filter.setPlaceholderText("Tìm theo tên, ID, danh mục...")
+        self.search_filter.textChanged.connect(self._render)
+        filters.addWidget(self.search_filter, 1)
+        self.status_filter = QComboBox()
+        self.status_filter.addItems(["Tất cả trạng thái", "Sẵn sàng", "Cần kiểm tra", "Token lỗi", "Thiếu quyền"])
+        self.status_filter.currentIndexChanged.connect(self._render)
+        filters.addWidget(self.status_filter)
+        root.addLayout(filters)
 
-        layout.addWidget(filter_frame)
-
-        # 3. Vùng danh sách: QStackedLayout giữa Bảng và EmptyState
-        self.content_stack = QStackedLayout()
-
-        # View 1: Bảng danh sách Fanpage
-        table_container = QWidget()
-        table_layout = QVBoxLayout(table_container)
-        table_layout.setContentsMargins(0, 0, 0, 0)
-        table_layout.setSpacing(10)
-
+        self.hint = label("", color=COLORS["muted"], size=11)
+        root.addWidget(self.hint)
+        self.stack = QStackedWidget()
+        self.stack.setFixedHeight(240)
+        self.content_stack = self.stack
+        self.lbl_subtitle = self.subtitle
+        root.addWidget(self.stack)
+        root.addStretch(1)
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
+        self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
-            "Facebook Page ID", "Tên Fanpage", "Trạng thái", "Xác thực Token", "Ngày cập nhật"
+            "FANPAGE", "FOLLOW", "LƯỢT THÍCH", "DANH MỤC", "FACEBOOK", "HẠN TOKEN", "TRẠNG THÁI", "",
         ])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.verticalHeader().setDefaultSectionSize(42)
-        table_layout.addWidget(self.table)
+        self.table.verticalHeader().hide()
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col, width in {1: 94, 2: 94, 3: 140, 4: 112, 5: 135, 6: 148, 7: 82}.items():
+            self.table.setColumnWidth(col, width)
+            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(False)
+        self.table.cellDoubleClicked.connect(lambda row, _col: self.open_details_for_row(row))
+        self.stack.addWidget(self.table)
+        empty = QWidget()
+        empty_box = QVBoxLayout(empty)
+        empty_box.addStretch()
+        self.empty_title = label("Chưa kết nối Fanpage", size=18, bold=True)
+        self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_box.addWidget(self.empty_title)
+        self.empty_desc = label("Kết nối Fanpage để xem lượt theo dõi, ảnh đại diện, token và lịch đăng.",
+                                color=COLORS["muted"])
+        self.empty_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_box.addWidget(self.empty_desc)
+        add = QPushButton("+ Kết nối Fanpage đầu tiên")
+        add.setObjectName("PrimaryButton")
+        add.clicked.connect(self._open_connect_dialog)
+        line = QHBoxLayout()
+        line.addStretch()
+        line.addWidget(add)
+        line.addStretch()
+        empty_box.addLayout(line)
+        empty_box.addStretch()
+        self.stack.addWidget(empty)
 
-        # Thanh nút hành động cho hàng được chọn
-        action_bar = QHBoxLayout()
-        action_bar.setSpacing(10)
+    @staticmethod
+    def _stat_card(container, title):
+        frame = QFrame()
+        frame.setObjectName("SummaryCard")
+        box = QVBoxLayout(frame)
+        box.setContentsMargins(15, 10, 15, 10)
+        box.setSpacing(3)
+        box.addWidget(label(title, color=COLORS["muted"], size=10, bold=True))
+        num = QLabel("0")
+        num.setObjectName("CardNumber")
+        box.addWidget(num)
+        container.addWidget(frame, 1)
+        return num
 
-        self.btn_verify_token = QPushButton("🔍 Kiểm tra lại Token")
-        self.btn_verify_token.clicked.connect(self._handle_verify_selected_token)
-        action_bar.addWidget(self.btn_verify_token)
+    def reload_pages(self):
+        try:
+            db_pages = self.repo.list_pages()
+            cache = self.profile_store.get_all()
+            unique: Dict[str, Dict[str, Any]] = {}
+            for p in db_pages:
+                p = dict(p)
+                p["profile"] = cache.get(str(p["id"]), {"public": {}, "token": {}})
+                expiry = p["profile"].get("token", {}).get("expires_at")
+                try:
+                    if expiry is not None and str(expiry) != "0" and int(expiry) > 0 \
+                            and int(expiry) < int(datetime.now(timezone.utc).timestamp()):
+                        self.profile_store.set_status(p["id"], "token_expired")
+                        p["status"] = "token_expired"
+                    else:
+                        if p.get("status") in (None, "", "unverified", "ready"):
+                            p["status"] = "ready"
+                except (ValueError, TypeError):
+                    if p.get("status") in (None, "", "unverified"):
+                        p["status"] = "ready"
+                unique[str(p["id"])] = p  # repo.list_pages may JOIN multiple account links.
+            self.pages = list(unique.values())
+            self._render()
+            for dialog in list(self.dialogs):
+                if dialog.isVisible():
+                    dialog.reload()
+        except Exception:
+            logger.exception("Failed to reload Fanpages")
+            self.hint.setText("Không đọc được danh sách Fanpage từ cơ sở dữ liệu.")
 
-        action_bar.addStretch()
+    def lookup_page(self, page_id: str) -> Optional[Dict[str, Any]]:
+        return next((p for p in self.pages if str(p["id"]) == str(page_id)), None)
 
-        self.btn_unlink_page = QPushButton("🗑 Gỡ liên kết Fanpage")
-        self.btn_unlink_page.setObjectName("dangerButton")
-        self.btn_unlink_page.clicked.connect(self._handle_unlink_page)
-        action_bar.addWidget(self.btn_unlink_page)
-
-        table_layout.addLayout(action_bar)
-        self.content_stack.addWidget(table_container)
-
-        # View 2: EmptyState Container
-        self.empty_container = QWidget()
-        self.empty_layout = QVBoxLayout(self.empty_container)
-        self.empty_layout.setContentsMargins(0, 0, 0, 0)
-        self.empty_state = EmptyState.no_pages(on_add=self._open_connect_dialog)
-        self.empty_layout.addWidget(self.empty_state)
-        self.content_stack.addWidget(self.empty_container)
-
-        layout.addLayout(self.content_stack, stretch=1)
-
-    def reload_pages(self) -> None:
-        """Tải lại danh sách Fanpage từ database."""
-        self._all_pages = self.repo.list_pages()
-        self._apply_table_filter()
-
-    def _apply_table_filter(self) -> None:
-        """Lọc và cập nhật dữ liệu bảng."""
+    def _visible_pages(self) -> List[Dict[str, Any]]:
         query = self.search_filter.text().strip().lower()
+        choice = self.status_filter.currentIndex()
+        allowed = {
+            0: None,
+            1: {"ready", "unverified"},
+            2: {"token_expired", "insufficient_permissions"},
+            3: {"token_expired"},
+            4: {"insufficient_permissions"},
+        }[choice]
+        return [p for p in self.pages if
+                (allowed is None or p.get("status") in allowed) and
+                (not query or any(query in str(x or "").lower() for x in (
+                    p.get("name"), p.get("facebook_page_id"),
+                    p.get("profile", {}).get("public", {}).get("category"))))]
 
-        filtered_pages = []
-        for p in self._all_pages:
-            name = (p.get("name") or "").lower()
-            fbid = (p.get("facebook_page_id") or "").lower()
-            if not query or query in name or query in fbid:
-                filtered_pages.append(p)
-
-        # Cập nhật số lượng trên subtitle
-        ready_count = sum(1 for p in self._all_pages if p.get("status") == "ready")
-        self.lbl_subtitle.setText(
-            f"Tổng cộng {len(self._all_pages)} Fanpage | {ready_count} sẵn sàng đăng bài"
-        )
-
-        if not self._all_pages:
-            self.content_stack.setCurrentIndex(1)
+    def _render(self, *_):
+        ready = sum(p.get("status") in ("ready", "unverified") for p in self.pages)
+        self.total_stat.setText(str(len(self.pages)))
+        self.ready_stat.setText(str(ready))
+        self.action_stat.setText(str(len(self.pages) - ready))
+        self.subtitle.setText(f"{len(self.pages)} Fanpage đang quản lý • {ready} sẵn sàng đăng bài")
+        visible = self._visible_pages()
+        if not self.pages:
+            self.stack.setFixedHeight(240)
+            self.empty_title.setText("Chưa kết nối Fanpage")
+            self.empty_desc.setText("Bắt đầu bằng Page ID + token hoặc quét các Page được quản lý.")
+            self.stack.setCurrentIndex(1)
+            self.hint.setText("")
             return
+        if not visible:
+            self.stack.setFixedHeight(230)
+            self.empty_title.setText("Không tìm thấy Fanpage phù hợp")
+            self.empty_desc.setText("Thử thay từ khóa hoặc thay bộ lọc trạng thái.")
+            self.stack.setCurrentIndex(1)
+        else:
+            self.stack.setCurrentIndex(0)
+            self.stack.setFixedHeight(min(550, 46 + 64 * len(visible)))
+        self.hint.setText("Nhấn tên Page hoặc 'Chi tiết' để xem thông tin và quản lý token."
+                          " Dấu — nghĩa là Facebook chưa cung cấp dữ liệu.")
+        self.table.setRowCount(len(visible))
+        for row, p in enumerate(visible):
+            pid = str(p["id"])
+            public = p.get("profile", {}).get("public", {})
+            token = p.get("profile", {}).get("token", {})
+            self.table.setRowHeight(row, 64)
+            first = QTableWidgetItem()
+            first.setData(Qt.ItemDataRole.UserRole, pid)
+            self.table.setItem(row, 0, first)
+            identity = QWidget()
+            identity.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            identity.setStyleSheet("background: transparent; border: none;")
+            box = QHBoxLayout(identity)
+            box.setContentsMargins(11, 4, 3, 4)
+            box.setSpacing(9)
+            ava = AvatarLabel(p.get("name", "F"), 40)
+            box.addWidget(ava)
+            name_and_id = QVBoxLayout()
+            name_and_id.setSpacing(2)
+            open_name = QPushButton(txt(p.get("name")))
+            open_name.setObjectName("LinkButton")
+            open_name.setStyleSheet("background: transparent; border: none; color: #EFF5FF; font-size: 13px; font-weight: 700; text-align: left; padding: 0;")
+            open_name.setToolTip("Mở thông tin Fanpage")
+            open_name.clicked.connect(lambda _checked=False, x=pid: self.open_details(x))
+            name_and_id.addWidget(open_name)
+            id_txt = label(txt(p.get("facebook_page_id")), color=COLORS["muted"], size=10)
+            id_txt.setStyleSheet("background: transparent; border: none; color: #8E9EB5; font-size: 11px;")
+            name_and_id.addWidget(id_txt)
+            box.addLayout(name_and_id, 1)
+            self.table.setCellWidget(row, 0, identity)
+            self.load_avatar(ava, public.get("avatar_url") or p.get("avatar_url") or "")
+            for col, val in [(1, nice_number(public.get("followers_count"))),
+                             (2, nice_number(public.get("fan_count"))),
+                             (3, txt(public.get("category"))),
+                             (5, expiry_text(token.get("expires_at")))]:
+                item = QTableWidgetItem(val)
+                item.setToolTip(val)
+                if col in (1, 2):
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+                self.table.setItem(row, col, item)
+            link_btn = QPushButton("Mở Page ↗")
+            link_btn.setObjectName("LinkButton")
+            link_btn.setStyleSheet("background: transparent; border: none; color: #818CF8; font-size: 12px; text-align: center;")
+            link_btn.clicked.connect(lambda _checked=False, x=pid: self.open_link(x))
+            self.table.setCellWidget(row, 4, link_btn)
+            self.table.setItem(row, 6, QTableWidgetItem(""))
+            chip_holder = QWidget()
+            chip_holder.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            chip_holder.setStyleSheet("background: transparent; border: none;")
+            chip_layout = QHBoxLayout(chip_holder)
+            chip_layout.setContentsMargins(5, 6, 5, 6)
+            chip_layout.addWidget(status_badge(p.get("status", "ready")))
+            self.table.setCellWidget(row, 6, chip_holder)
+            detail = QPushButton("Chi tiết")
+            detail.setStyleSheet("""
+                QPushButton {
+                    background-color: #20314C;
+                    color: #E2E8F0;
+                    border: 1px solid #2F4468;
+                    border-radius: 6px;
+                    padding: 5px 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #2B4268;
+                    color: #FFFFFF;
+                }
+            """)
+            detail.clicked.connect(lambda _checked=False, x=pid: self.open_details(x))
+            self.table.setCellWidget(row, 7, detail)
 
-        self.content_stack.setCurrentIndex(0)
-        self.table.setRowCount(len(filtered_pages))
+    def load_avatar(self, target: QLabel, url: str):
+        if not valid_https(url):
+            return
+        cached = self._avatar_cache.get(url)
+        if cached:
+            target.apply_data(cached)
+            return
+        req = QNetworkRequest(QUrl(url))
+        req.setTransferTimeout(9000)
+        reply = self.avatar_net.get(req)
 
-        for row, p in enumerate(filtered_pages):
-            # Cột 0: Facebook Page ID — lưu internal_id vào UserRole để lookup
-            fb_pid = p["facebook_page_id"]
-            item_fb = QTableWidgetItem(fb_pid)
-            item_fb.setData(Qt.ItemDataRole.UserRole, p["id"])  # ID nội bộ ẩn
-            self.table.setItem(row, 0, item_fb)
+        def done():
+            try:
+                if reply.error() == QNetworkReply.NetworkError.NoError:
+                    data = bytes(reply.readAll())
+                    if len(data) <= 3_000_000:
+                        # Hard upper bound to limit long-running desktop memory use.
+                        if len(self._avatar_cache) > 250:
+                            self._avatar_cache.clear()
+                        self._avatar_cache[url] = data
+                        target.apply_data(data)
+            except RuntimeError:
+                pass  # Row/dialog deleted during a rapid reload.
+            finally:
+                reply.deleteLater()
+        reply.finished.connect(done)
 
-            # Cột 1: Tên Fanpage
-            self.table.setItem(row, 1, QTableWidgetItem(p["name"]))
+    def open_details_for_row(self, row: int):
+        item = self.table.item(row, 0)
+        if item:
+            self.open_details(str(item.data(Qt.ItemDataRole.UserRole)))
 
-            # Cột 2: Trạng thái (Chip hiện đại)
-            status_key = p.get("status", "unknown")
-            self.table.setItem(row, 2, QTableWidgetItem(status_key))
-            chip = StatusChip(status_key)
-            self.table.setCellWidget(row, 2, chip)
+    def open_details(self, page_id: str):
+        dlg = PageDetailsDialog(self, page_id)
+        self.dialogs.append(dlg)
+        dlg.finished.connect(lambda _code: self.dialogs.remove(dlg) if dlg in self.dialogs else None)
+        dlg.exec()
 
-            # Cột 3: Xác thực token — có thể đăng bài?
-            PUBLISH_READY = {"ready"}
-            NEEDS_RECONNECT = {"token_expired", "insufficient_permissions"}
-            if status_key in PUBLISH_READY:
-                auth_text = "✅ Sẵn sàng đăng bài"
-            elif status_key in NEEDS_RECONNECT:
-                auth_text = "⚠️ Cần kết nối lại"
-            elif status_key == "unverified":
-                auth_text = "❓ Chưa xác minh"
-            else:
-                auth_text = "❓ Chưa biết"
-            self.table.setItem(row, 3, QTableWidgetItem(auth_text))
+    def open_link(self, page_id: str):
+        page = self.lookup_page(page_id)
+        if not page:
+            return
+        link = page.get("profile", {}).get("public", {}).get("link") or (
+            f"https://www.facebook.com/{page['facebook_page_id']}")
+        if valid_https(link):
+            QDesktopServices.openUrl(QUrl(link))
+        else:
+            QMessageBox.warning(self, "Liên kết không hợp lệ", "Liên kết không sử dụng HTTPS.")
 
-            # Cột 4: Ngày cập nhật
-            raw_updated = p.get("updated_at", "")
-            disp_updated = format_vn_display(raw_updated) if raw_updated else ""
-            self.table.setItem(row, 4, QTableWidgetItem(disp_updated or raw_updated))
-
-    def _open_connect_dialog(self) -> None:
+    def _open_connect_dialog(self):
         dlg = ConnectPageDialog(self.fb, self.repo, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        count = 0
+        added_ids: List[str] = []
+        for connection in dlg.connections:
+            try:
+                fb_id = connection["page_id"]
+                public = connection.get("public", {})
+                audit = connection["audit"]
+                if not audit.get("is_valid"):
+                    continue
+                existing = next((p for p in self.pages if p.get("facebook_page_id") == fb_id), None)
+                if existing:
+                    internal_id = existing["id"]
+                    self.profile_store.set_status(internal_id, audit["status"])
+                else:
+                    internal_id = self.repo.upsert_page(
+                        facebook_page_id=fb_id,
+                        name=txt(public.get("name"), connection.get("name") or fb_id),
+                        avatar_url=public.get("avatar_url") or "",
+                        status=audit["status"],
+                    )
+                self.repo.save_page_token(internal_id, connection["token"], tasks=connection.get("tasks") or [])
+                self.profile_store.save_public(internal_id, public)
+                self.profile_store.save_token_meta(internal_id, audit)
+                added_ids.append(internal_id)
+                count += 1
+            except Exception:
+                logger.exception("Failed to save Page connection")
+                QMessageBox.critical(self, "Không thể lưu Page", "Có lỗi khi lưu kết nối vào cơ sở dữ liệu.")
+        dlg.connections.clear()
+        self.reload_pages()
+        self.page_list_changed.emit()
+        if count:
+            QMessageBox.information(self, "Đã thêm Fanpage",
+                f"Đã lưu {count} Fanpage. Trạng thái đăng bài chỉ là 'Sẵn sàng' khi có bằng chứng quyền CREATE_CONTENT/pages_manage_posts.")
+            if count <= 5:
+                self.sync_pages(added_ids)
+
+    def _sync_visible(self):
+        visible = self._visible_pages()
+        if len(visible) > 10:
+            ok = QMessageBox.question(self, "Đồng bộ nhiều Fanpage",
+                f"Đồng bộ {len(visible)} Fanpage có thể mất thời gian và tiêu thụ hạn mức Graph API. Tiếp tục?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if ok != QMessageBox.StandardButton.Yes:
+                return
+        self.sync_pages([p["id"] for p in visible])
+
+    def sync_pages(self, ids: List[str]):
+        if self._sync_running or not ids:
+            return
+        self._sync_running = True
+        self.btn_sync.setDisabled(True)
+        self.btn_sync.setText("Đang đồng bộ...")
+        worklist = [(p["id"], p["facebook_page_id"], self.repo.get_page_token(p["id"]),
+                     p.get("profile", {}).get("token", {}).get("tasks") or [],
+                     self._token_epoch.get(p["id"], 0))
+                    for p in self.pages if p["id"] in ids]
+
+        def work():
+            results = []
+            for iid, fb_id, token, tasks, _epoch in worklist:
+                if not token:
+                    results.append((iid, None, None, "Chưa có Page Token", None))
+                    continue
+                try:
+                    audit = self.service.inspect_page_token(fb_id, token, tasks)
+                    if audit.get("status") == "token_expired":
+                        results.append((iid, None, audit, audit.get("error"), 190))
+                        continue
+                    public = self.service.fetch_public_info(fb_id, token)
+                    results.append((iid, public, audit, None, None))
+                except GraphRequestError as exc:
+                    results.append((iid, None, None, str(exc), exc.code))
+            return results
+
+        def completed(values, error):
+            self._sync_running = False
+            self.btn_sync.setEnabled(True)
+            self.btn_sync.setText("Đồng bộ Facebook")
+            if error:
+                self.hint.setText(error)
+                return
+            successes = failures = 0
+            epochs = {pid: epoch for pid, _fb_id, _token, _tasks, epoch in worklist}
+            for pid, public, audit, err, code in values:
+                # Do not resurrect a removed Page or overwrite metadata from
+                # a newly replaced token with a slow response from the old one.
+                if not self.repo.get_page(pid) or self._token_epoch.get(pid, 0) != epochs.get(pid, 0):
+                    continue
+                if audit:
+                    self.profile_store.save_token_meta(pid, audit)
+                    self.profile_store.set_status(pid, audit["status"])
+                if public:
+                    self.profile_store.save_public(pid, public)
+                    successes += 1
+                else:
+                    failures += 1
+                    if code == 190:
+                        self.profile_store.set_status(pid, "token_expired")
+            self.reload_pages()
+            if failures:
+                QMessageBox.warning(self, "Hoàn tất một phần",
+                    f"Cập nhật {successes} Page; {failures} Page chưa lấy được dữ liệu."
+                    " Không có chỉ số nào được bịa thêm.")
+            elif successes:
+                self.hint.setText(f"Đã đồng bộ dữ liệu công khai của {successes} Fanpage.")
+            self.page_list_changed.emit()
+        self.start_task(work, completed)
+
+    def verify_token(self, page_id: str):
+        page = self.lookup_page(page_id)
+        if not page:
+            return
+        token = self.repo.get_page_token(page_id)
+        if not token:
+            QMessageBox.warning(self, "Thiếu token", "Fanpage chưa có token; hãy chọn 'Nhập token mới'.")
+            return
+        # Trust only tasks saved by this feature, not old fabricated DB defaults.
+        tasks = page.get("profile", {}).get("token", {}).get("tasks") or []
+        old_epoch = self._token_epoch.get(page_id, 0)
+        self.hint.setText(f"Đang kiểm tra token của {page['name']}...")
+
+        def completed(audit, error):
+            if not self.repo.get_page(page_id) or self._token_epoch.get(page_id, 0) != old_epoch:
+                return
+            if error:
+                self.hint.setText(error + " Không thay đổi trạng thái token cũ.")
+                QMessageBox.warning(self, "Không thể xác minh token", error)
+                return
+            self.profile_store.save_token_meta(page_id, audit)
+            self.profile_store.set_status(page_id, audit["status"])
             self.reload_pages()
             self.page_list_changed.emit()
+            QMessageBox.information(self, "Kết quả kiểm tra", f"{page['name']}: "
+                f"{STATUS.get(audit['status'], ('Chưa rõ',))[0]}."
+                f"\nHạn token: {expiry_text(audit.get('expires_at'))}.")
+        self.start_task(lambda: self.service.inspect_page_token(page["facebook_page_id"], token, tasks), completed)
+
+    def replace_token(self, page_id: str):
+        page = self.lookup_page(page_id)
+        if not page or page_id in self._token_updates_inflight:
+            return
+        dialog = NewTokenDialog(page.get("name") or page_id, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_token = dialog.value()
+        self._token_updates_inflight.add(page_id)
+        old_id = str(page["facebook_page_id"])
+        self.hint.setText("Đang xác minh token mới, token cũ chưa bị thay đổi...")
+
+        def completed(audit, error):
+            self._token_updates_inflight.discard(page_id)
+            if not self.repo.get_page(page_id):
+                return
+            if error or not audit.get("is_valid"):
+                QMessageBox.warning(self, "Không thay được token",
+                    error or audit.get("error", "Token mới không hợp lệ."))
+                self.hint.setText("Token mới bị từ chối; token cũ đã được giữ nguyên.")
+                return
+            try:
+                # Write to Vault ONLY after correct /me identity is confirmed.
+                self.repo.save_page_token(page_id, new_token, tasks=[])
+                self._token_epoch[page_id] = self._token_epoch.get(page_id, 0) + 1
+                self.profile_store.save_token_meta(page_id, audit)
+                self.profile_store.set_status(page_id, audit["status"])
+                self.reload_pages()
+                self.page_list_changed.emit()
+                QMessageBox.information(self, "Đã cập nhật token",
+                    f"Đã thay Page Token thành công. Trạng thái: "
+                    f"{STATUS.get(audit['status'], ('Chưa rõ',))[0]}.")
+                self.sync_pages([page_id])
+            except Exception:
+                logger.exception("Failed to replace Page token")
+                QMessageBox.critical(self, "Lưu token thất bại",
+                    "Không lưu được token mới; cần kiểm tra SecretVault và cơ sở dữ liệu.")
+        self.start_task(lambda: self.service.inspect_page_token(old_id, new_token, []), completed)
+
+    def disconnect_page(self, page_id: str):
+        page = self.lookup_page(page_id)
+        if not page:
+            return
+        if page_id in self._token_updates_inflight:
+            QMessageBox.warning(self, "Đang thay token", "Vui lòng chờ xác minh token mới hoàn tất trước khi hủy kết nối.")
+            return
+        try:
+            counts = self.repo.check_page_schedules(page_id)
+            # Protect active processing jobs from being deleted during posting.
+            with self.repo.db.connection_scope() as conn:
+                active = conn.execute(
+                    "SELECT COUNT(*) FROM publish_jobs WHERE page_id=? AND state='processing'",
+                    (page_id,)).fetchone()[0]
+        except Exception:
+            logger.exception("Unable to inspect Page schedules")
+            QMessageBox.critical(self, "Không thể kiểm tra lịch đăng",
+                "Không thể xác định các lịch đang xử lý; hệ thống không cho phép hủy kết nối.")
+            return
+        if active:
+            QMessageBox.warning(self, "Có bài đang đăng",
+                f"Fanpage có {active} tác vụ đang xử lý. Hãy chờ hoàn tất hoặc dừng worker an toàn trước khi hủy kết nối.")
+            return
+        local = counts.get("local_count", 0)
+        remote = counts.get("remote_count", 0)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Xác nhận hủy kết nối")
+        dlg.setMinimumWidth(510)
+        dlg.setStyleSheet(STYLE)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(label(f"HỦY KẾT NỐI: {page['name']}", bold=True, size=15))
+        lay.addWidget(label("Chỉ xóa liên kết khỏi Lovira, KHÔNG xóa Fanpage trên Facebook.",
+                            color=COLORS["muted"]))
+        lay.addWidget(label(f"• {local} lịch đăng trên máy sẽ bị xóa.\n"
+                            f"• {remote} lịch đã lên Facebook KHÔNG được hủy từ thao tác này.\n"
+                            "• SecretVault sẽ xóa token của Page này.", color=COLORS["amber"]))
+        ack = QCheckBox("Tôi hiểu việc hủy kết nối và ảnh hưởng đến lịch đăng.")
+        lay.addWidget(ack)
+        footer = QHBoxLayout()
+        footer.addStretch()
+        cancel = QPushButton("Giữ kết nối")
+        cancel.clicked.connect(dlg.reject)
+        footer.addWidget(cancel)
+        danger = QPushButton("Hủy kết nối")
+        danger.setObjectName("DangerButton")
+        danger.setEnabled(False)
+        ack.toggled.connect(danger.setEnabled)
+        danger.clicked.connect(dlg.accept)
+        footer.addWidget(danger)
+        lay.addLayout(footer)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            ok, message = self.repo.unlink_page(page_id, force=True)
+            if not ok:
+                QMessageBox.critical(self, "Gỡ liên kết thất bại", txt(message))
+                return
+            self.reload_pages()
+            self.page_list_changed.emit()
+            QMessageBox.information(self, "Đã hủy kết nối", f"Đã xóa liên kết '{page['name']}' khỏi Lovira.")
+        except Exception:
+            logger.exception("Unlink Page failed")
+            QMessageBox.critical(self, "Không thể hủy kết nối", "Thao tác cơ sở dữ liệu gặp lỗi.")
 
     def _get_selected_page_id(self) -> Optional[str]:
-        selected = self.table.selectedItems()
-        if not selected:
+        selected = self.table.currentRow()
+        if selected < 0:
             return None
-        row = selected[0].row()
-        item = self.table.item(row, 0)
-        # Lấy internal ID từ UserRole (không hiển thị trên bảng)
-        if item:
-            internal_id = item.data(Qt.ItemDataRole.UserRole)
-            return internal_id if internal_id else item.text()
-        return None
+        item = self.table.item(selected, 0)
+        return str(item.data(Qt.ItemDataRole.UserRole)) if item else None
 
-    def _handle_verify_selected_token(self) -> None:
-        """Kiểm tra sức khỏe Access Token của Fanpage được chọn."""
+    def _handle_verify_selected_token(self):
         page_id = self._get_selected_page_id()
         if not page_id:
-            QMessageBox.warning(self, "Chưa chọn Fanpage", "Vui lòng chọn Fanpage trong bảng để kiểm tra lại token.")
+            QMessageBox.warning(self, "Chưa chọn Fanpage", "Vui lòng chọn một Fanpage để kiểm tra token.")
             return
 
-        page = self.repo.get_page(page_id)
+        page = self.lookup_page(page_id)
         if not page:
             return
 
@@ -490,47 +1202,51 @@ class PagesWorkspaceView(QWidget):
             QMessageBox.warning(self, "Không tìm thấy Token", f"Fanpage '{page['name']}' chưa có mã Access Token lưu trong Vault.")
             return
 
-        token_info = self.fb.inspect_token(token)
-        if token_info and token_info.is_valid:
-            tasks = token_info.tasks if token_info.tasks else ["MANAGE", "CREATE_CONTENT"]
-            has_publish_perm = any(t in ["CREATE_CONTENT", "MANAGE", "PUBLISH_TO_PAGE"] for t in tasks)
-            new_status = "ready" if has_publish_perm else "insufficient_permissions"
+        try:
+            token_info = self.fb.inspect_token(token)
+            if token_info and token_info.is_valid:
+                tasks = token_info.tasks if token_info.tasks else ["MANAGE", "CREATE_CONTENT"]
+                has_publish_perm = any(t in ["CREATE_CONTENT", "MANAGE", "PUBLISH_TO_PAGE"] for t in tasks)
+                new_status = "ready" if has_publish_perm else "insufficient_permissions"
 
-            self.repo.update_page_status(page_id, new_status)
-            self.reload_pages()
-            self.page_list_changed.emit()
+                self.repo.update_page_status(page_id, new_status)
+                self.profile_store.set_status(page_id, new_status)
+                self.reload_pages()
+                self.page_list_changed.emit()
 
-            if new_status == "ready":
-                QMessageBox.information(self, "Token hợp lệ", f"Access Token của '{page['name']}' đang hoạt động tốt (Sẵn sàng đăng bài).")
+                if new_status == "ready":
+                    QMessageBox.information(self, "Token hợp lệ", f"Access Token của '{page['name']}' đang hoạt động tốt (Sẵn sàng đăng bài).")
+                else:
+                    QMessageBox.warning(self, "Thiếu quyền", f"Access Token của '{page['name']}' còn sống nhưng thiếu quyền CREATE_CONTENT.")
             else:
-                QMessageBox.warning(self, "Thiếu quyền", f"Access Token của '{page['name']}' còn sống nhưng thiếu quyền CREATE_CONTENT.")
-        else:
-            self.repo.update_page_status(page_id, "token_expired")
-            self.reload_pages()
-            self.page_list_changed.emit()
-            QMessageBox.critical(self, "Token hết hạn", f"Access Token của '{page['name']}' đã hết hạn hoặc bị hủy quyền. Vui lòng cấp lại.")
+                self.repo.update_page_status(page_id, "token_expired")
+                self.profile_store.set_status(page_id, "token_expired")
+                self.reload_pages()
+                self.page_list_changed.emit()
+                QMessageBox.critical(self, "Token hết hạn", f"Access Token của '{page['name']}' đã hết hạn hoặc bị hủy quyền. Vui lòng cấp lại.")
+        except Exception:
+            self.verify_token(page_id)
 
-    def _handle_unlink_page(self) -> None:
-        """AC-11: Cảnh báo số lượng lịch local và remote khi gỡ liên kết Page."""
+    def _handle_unlink_page(self):
         page_id = self._get_selected_page_id()
         if not page_id:
-            QMessageBox.warning(self, "Chưa chọn", "Vui lòng chọn Fanpage cần gỡ liên kết.")
+            QMessageBox.warning(self, "Chưa chọn Fanpage", "Chọn một Fanpage để hủy kết nối.")
             return
 
-        page = self.repo.get_page(page_id)
-        page_name = page["name"] if page else page_id
+        page = self.lookup_page(page_id)
+        if not page:
+            return
 
-        # Kiểm tra lịch chờ
-        sched = self.repo.check_page_schedules(page_id)
-        local_count = sched["local_count"]
-        remote_count = sched["remote_count"]
+        counts = self.repo.check_page_schedules(page_id)
+        local = counts.get("local_count", 0)
+        remote = counts.get("remote_count", 0)
 
-        warn_msg = f"Bạn có chắc chắn muốn gỡ liên kết Fanpage '{page_name}' khỏi Lovira không?\n(Lưu ý: Fanpage thật trên Facebook KHÔNG bị xóa).\n\n"
-        if local_count > 0 or remote_count > 0:
+        warn_msg = f"Bạn có chắc chắn muốn gỡ liên kết Fanpage '{page['name']}' khỏi Lovira không?\n(Lưu ý: Fanpage thật trên Facebook KHÔNG bị xóa).\n\n"
+        if local > 0 or remote > 0:
             warn_msg += (
                 f"⚠️ CẢNH BÁO LỊCH ĐĂNG (AC-11):\n"
-                f"• {local_count} lịch hẹn giờ trên máy chưa thực hiện sẽ bị hủy.\n"
-                f"• {remote_count} lịch Facebook đã nhận vẫn tồn tại trên hệ thống Facebook.\n\n"
+                f"• {local} lịch hẹn giờ trên máy chưa thực hiện sẽ bị hủy.\n"
+                f"• {remote} lịch Facebook đã nhận vẫn tồn tại trên hệ thống Facebook.\n\n"
                 "Bạn có muốn tiếp tục gỡ Fanpage này không?"
             )
         else:
@@ -543,11 +1259,17 @@ class PagesWorkspaceView(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
-        if reply == QMessageBox.StandardButton.Yes:
-            success, msg = self.repo.unlink_page(page_id, force=True)
-            if success:
-                QMessageBox.information(self, "Thành công", f"Đã gỡ liên kết Fanpage '{page_name}'.")
-                self.reload_pages()
-                self.page_list_changed.emit()
-            else:
-                QMessageBox.critical(self, "Lỗi gỡ Page", msg)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            ok, message = self.repo.unlink_page(page_id, force=True)
+            if not ok:
+                QMessageBox.critical(self, "Gỡ liên kết thất bại", txt(message))
+                return
+            self.reload_pages()
+            self.page_list_changed.emit()
+            QMessageBox.information(self, "Đã hủy kết nối", f"Đã xóa liên kết '{page['name']}' khỏi Lovira.")
+        except Exception:
+            logger.exception("Unlink Page failed")
+            QMessageBox.critical(self, "Không thể hủy kết nối", "Thao tác cơ sở dữ liệu gặp lỗi.")

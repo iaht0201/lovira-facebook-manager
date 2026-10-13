@@ -122,18 +122,27 @@ class MediaProcessor:
         self,
         video_path: Path,
         output_thumbnail_path: Path,
-        at_second: float = 1.0,
+        at_second: float = 3.0,
     ) -> Path:
-        """Trích xuất 1 frame làm ảnh thumbnail JPEG đại diện cho video."""
+        """Trích xuất 1 frame làm ảnh thumbnail JPEG đại diện cho video (mặc định tại giây thứ 3)."""
         video_path = Path(video_path).resolve()
         output_thumbnail_path = Path(output_thumbnail_path).resolve()
         output_thumbnail_path.parent.mkdir(parents=True, exist_ok=True)
+
+        target_sec = max(0.0, at_second)
+        # Nếu video ngắn hơn thời điểm yêu cầu, tự động lấy ở điểm giữa
+        try:
+            probe = self.inspect_video(video_path)
+            if probe.duration > 0 and probe.duration <= target_sec:
+                target_sec = max(0.0, probe.duration / 2.0)
+        except Exception:
+            pass
 
         cmd = [
             self.ffmpeg_exe,
             "-hide_banner",
             "-loglevel", "error",
-            "-ss", str(max(0.0, at_second)),
+            "-ss", f"{target_sec:.2f}",
             "-i", str(video_path),
             "-vframes", "1",
             "-q:v", "2",
@@ -152,3 +161,12 @@ class MediaProcessor:
             raise RuntimeError(f"Tạo thumbnail thất bại: {result.stderr}")
 
         return output_thumbnail_path
+
+    def extract_thumbnail(
+        self,
+        video_path: Path,
+        output_thumbnail_path: Path,
+        timestamp_sec: float = 3.0,
+    ) -> Path:
+        """Trích xuất 1 frame làm ảnh thumbnail JPEG tại timestamp_sec (mặc định giây thứ 3)."""
+        return self.generate_thumbnail(video_path, output_thumbnail_path, at_second=timestamp_sec)

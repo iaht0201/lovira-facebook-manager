@@ -179,3 +179,97 @@ class MediaRepository:
                 return True, f"Đã xóa bản ghi media nhưng không thể xóa file vật lý: {e}"
 
         return True, "Đã xóa media asset thành công."
+
+    @staticmethod
+    def _empty_usage_dict() -> Dict[str, Any]:
+        return {
+            "draft_count": 0,
+            "scheduled_jobs": [],
+            "published_jobs": [],
+            "failed_jobs": [],
+            "other_jobs": [],
+        }
+
+    def get_media_usage_summary(
+        self, asset_ids: Optional[List[str]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Lấy thông tin tổng hợp sử dụng (bài đăng, lịch, lỗi) cho danh sách media_ids.
+        Hỗ trợ phân biệt trạng thái hiển thị của từng media trong Thư viện Media.
+        """
+        results: Dict[str, Dict[str, Any]] = {}
+        target_set = set(asset_ids) if asset_ids else None
+
+        active_states = {"scheduled_local", "queued", "uploading", "processing", "publishing"}
+        published_states = {"published", "completed", "success"}
+        failed_states = {"failed", "dead_letter", "error"}
+
+        with self.db.connection_scope() as conn:
+            # 1. Quét drafts
+            try:
+                cur_drafts = conn.execute("SELECT id, title, media_refs FROM drafts;")
+                for row in cur_drafts.fetchall():
+                    refs = row["media_refs"]
+                    if refs:
+                        try:
+                            ref_list = json.loads(refs)
+                            if isinstance(ref_list, list):
+                                for aid in ref_list:
+                                    if target_set is None or aid in target_set:
+                                        if aid not in results:
+                                            results[aid] = self._empty_usage_dict()
+                                        results[aid]["draft_count"] += 1
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+            except Exception:
+                pass
+
+            # 2. Quét publish_jobs
+            try:
+                cur_jobs = conn.execute("""
+                    SELECT pj.id, pj.batch_id, pj.page_id, pj.state, pj.scheduled_at_utc, pj.content_snapshot,
+                           p.name AS page_name
+                    FROM publish_jobs pj
+                    LEFT JOIN pages p ON pj.page_id = p.id;
+                """)
+                for row in cur_jobs.fetchall():
+                    snap = row["content_snapshot"]
+                    if not snap:
+                        continue
+                    try:
+                        snap_data = json.loads(snap)
+                        media_ids = set()
+                        if snap_data.get("primary_media_id"):
+                            media_ids.add(snap_data["primary_media_id"])
+                        for m in snap_data.get("media_ids", []):
+                            media_ids.add(m)
+
+                        for aid in media_ids:
+                            if target_set is not None and aid not in target_set:
+                                continue
+                            if aid not in results:
+                                results[aid] = self._empty_usage_dict()
+
+                            job_info = {
+                                "job_id": row["id"],
+                                "batch_id": row["batch_id"],
+                                "page_id": row["page_id"],
+                                "page_name": row["page_name"] or row["page_id"],
+                                "state": row["state"],
+                                "scheduled_at_utc": row["scheduled_at_utc"],
+                            }
+                            st = row["state"]
+                            if st in active_states:
+                                results[aid]["scheduled_jobs"].append(job_info)
+                            elif st in published_states:
+                                results[aid]["published_jobs"].append(job_info)
+                            elif st in failed_states:
+                                results[aid]["failed_jobs"].append(job_info)
+                            else:
+                                results[aid]["other_jobs"].append(job_info)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            except Exception:
+                pass
+
+        return results

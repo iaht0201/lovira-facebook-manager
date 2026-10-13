@@ -1,492 +1,2193 @@
+
 """
-Lovira Workspace 2.0 — Post Composer Workspace (post_composer.py)
-Giao diện Soạn bài, Facebook Reels và Đặt lịch đa Fanpage 2.0 (Mockup 03_soan_bai.png):
-- Thiết kế bố cục 2 cột: Cột Soạn thảo nâng cao & Khung Live Preview di động thời gian thực
-- Hỗ trợ đăng đồng thời đa Page kèm bộ chọn nhanh (Select All / Deselect All)
-- Tích hợp SimulatedPostPreview hiển thị trực quan Reels/Post trên điện thoại
-- Bộ đếm ký tự, đếm hashtag và thanh công cụ chèn hashtag nhanh
-- Hẹn giờ chuẩn hóa theo múi giờ Việt Nam (UTC+7), bảo lưu giờ khi bật/tắt (AC-06, AC-41)
-- Tạo ContentSnapshot bất biến và hàng đợi nguyên tử chống bấm đúp (AC-15, AC-19)
+Lovira Workspace 2.0 - Post Composer
+Compact Multi-Fanpage Publishing Workspace
+Native PySide6 Desktop
+
+Features:
+- Multi-select Fanpage dropdown, searchable
+- Compact layout, fixed submit footer
+- Text, Photo, Video, Reels
+- Local media and media library
+- Async URL video downloading
+- Per-page caption overrides
+- Live simulated preview
+- Vietnam timezone scheduling
+- Confirmation before queue insertion
 """
 
+import hashlib
+import ipaddress
 import logging
+import threading
 import uuid
-from datetime import datetime, timedelta
+
+from datetime import timedelta
+from pathlib import Path
 from typing import Optional, Dict, Any, List
-from PySide6.QtCore import Qt, Signal, QDateTime
+from urllib.parse import urlparse
+
+from PySide6.QtCore import (
+    Qt, Signal, QPoint, QSize,
+    QDate, QTime, QDateTime,
+    QThread, QTimer, QSignalBlocker
+)
+
 from PySide6.QtWidgets import (
+    QApplication,
     QWidget,
+    QFrame,
+    QGroupBox,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QLineEdit,
     QTextEdit,
-    QPushButton,
-    QCheckBox,
     QComboBox,
+    QCheckBox,
     QDateTimeEdit,
-    QFrame,
-    QScrollArea,
-    QMessageBox,
-    QGroupBox,
     QListWidget,
     QListWidgetItem,
+    QScrollArea,
+    QSplitter,
+    QFileDialog,
+    QDialog,
+    QMessageBox,
+    QProgressBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QAbstractItemView,
 )
-from src.lovira.domain.timezone import vn_now, vn_datetime_to_utc_iso, format_vn_display
+
 from src.lovira.domain.composer import (
-    PostComposerState,
-    ContentType,
-    ScheduleMode,
     ContentSnapshot,
+    ContentType,
+    PostComposerState,
+    ScheduleMode,
 )
+
+from src.lovira.domain.timezone import (
+    vn_now,
+    create_vn_datetime,
+    vn_datetime_to_utc_iso,
+    validate_schedule_time,
+)
+
 from src.lovira.storage.page_repository import PageRepository
 from src.lovira.storage.queue_repository import PublishQueueRepository
-from src.lovira.ui.design.icons import get_icon
-from src.lovira.ui.widgets.simulated_preview import SimulatedPostPreview
+
+from src.lovira.ui.widgets.simulated_preview import (
+    SimulatedPostPreview,
+)
+
 
 logger = logging.getLogger(__name__)
 
+VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+IMAGE_EXT = {".jpg", ".jpeg", ".png"}
+
+
+# ==========================================================
+# DESIGN SYSTEM
+# ==========================================================
+
+COMPOSER_STYLE = """
+QWidget#composerRoot {
+    background: #0D1627;
+    color: #E9EFFA;
+}
+
+QWidget#composerCanvas,
+QWidget#composerLeft {
+    background: transparent;
+}
+
+QLabel#composerHint,
+QLabel#composerTitle {
+    background: transparent;
+    border: none;
+}
+
+QLabel#composerTitle {
+    font-size: 16px;
+    font-weight: 700;
+    color: #F4F7FF;
+}
+
+QLabel#composerHint {
+    font-size: 11px;
+    color: #A7B6CD;
+}
+
+QScrollArea#composerScroll {
+    background: transparent;
+    border: none;
+}
+
+QGroupBox#composerSection {
+    background: #17243A;
+    color: #EAF0FA;
+    border: 1px solid #2D405C;
+    border-radius: 10px;
+    margin-top: 12px;
+    padding-top: 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QGroupBox#composerSection::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    padding: 0 5px;
+    background: #17243A;
+    color: #DFE8F7;
+}
+
+QWidget#composerRoot QLineEdit,
+QWidget#composerRoot QTextEdit,
+QWidget#composerRoot QComboBox,
+QWidget#composerRoot QDateTimeEdit {
+    background: #202F47;
+    color: #F1F5FC;
+    border: 1px solid #364A68;
+    border-radius: 8px;
+    padding: 5px 9px;
+    selection-background-color: #6257E8;
+}
+
+QWidget#composerRoot QLineEdit:focus,
+QWidget#composerRoot QTextEdit:focus,
+QWidget#composerRoot QComboBox:focus,
+QWidget#composerRoot QDateTimeEdit:focus {
+    border-color: #8981FF;
+}
+
+QWidget#composerRoot QPushButton {
+    background: #263752;
+    color: #E4ECF9;
+    border: 1px solid #374C6B;
+    border-radius: 8px;
+    padding: 0 10px;
+    min-height: 32px;
+    font-size: 12px;
+}
+
+QWidget#composerRoot QPushButton:hover {
+    background: #344864;
+}
+
+QWidget#composerRoot QPushButton:disabled {
+    color: #7889A3;
+    background: #1C293D;
+}
+
+QWidget#composerRoot QPushButton#composerPrimary {
+    background: #6257E8;
+    color: white;
+    border-color: #756AF5;
+    font-weight: 700;
+}
+
+QWidget#composerRoot QPushButton#composerPrimary:hover {
+    background: #756AF0;
+}
+
+QWidget#composerRoot QPushButton#composerLink {
+    background: transparent;
+    border-color: transparent;
+    color: #BAB4FF;
+    padding: 0 5px;
+}
+
+QFrame#composerFooter {
+    background: #17243A;
+    border-top: 1px solid #30435E;
+}
+
+QFrame#composerPreviewPane {
+    background: #17243A;
+    border: 1px solid #2D405C;
+    border-radius: 10px;
+}
+
+QProgressBar#composerProgress {
+    background: #1B2940;
+    border: 0;
+    border-radius: 4px;
+    height: 8px;
+}
+
+QProgressBar#composerProgress::chunk {
+    background: #6257E8;
+    border-radius: 4px;
+}
+
+QSplitter::handle {
+    background: transparent;
+}
+"""
+
+
+POPUP_STYLE = """
+QFrame#pagePopup {
+    background: #19273E;
+    border: 1px solid #405474;
+    border-radius: 11px;
+}
+
+QFrame#pagePopup QLabel {
+    background: transparent;
+    color: #A9B8CE;
+    font-size: 11px;
+}
+
+QFrame#pagePopup QLineEdit {
+    background: #23344F;
+    color: #FFFFFF;
+    border: 1px solid #405474;
+    border-radius: 8px;
+    padding: 6px 9px;
+}
+
+QFrame#pagePopup QLineEdit:focus {
+    border-color: #8178F5;
+}
+
+QFrame#pagePopup QListWidget {
+    background: transparent;
+    border: none;
+    outline: none;
+}
+
+QFrame#pagePopup QCheckBox {
+    background: transparent;
+    color: #E4EBF7;
+    spacing: 9px;
+    padding: 4px;
+}
+
+QFrame#pagePopup QPushButton {
+    background: #283A55;
+    color: #E4EBF7;
+    border: 1px solid #3A4D6C;
+    border-radius: 7px;
+    padding: 5px 9px;
+}
+
+QFrame#pagePopup QPushButton:hover {
+    background: #344A6B;
+}
+"""
+
+
+# ==========================================================
+# FANPAGE MULTI-SELECT DROPDOWN
+# ==========================================================
+
+class FanpageMultiSelect(QWidget):
+    """
+    Dropdown chọn nhiều Fanpage.
+
+    - Tìm theo tên hoặc Facebook Page ID
+    - Chọn nhiều Page bằng checkbox
+    - Chọn tất cả / Bỏ chọn
+    - Giữ lựa chọn khi cập nhật danh sách
+    - Chỉ chọn Page có trạng thái ready
+    - Trả về internal Page ID
+    """
+
+    selection_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self._rows = []
+        self._names = {}
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.button = QPushButton("Chọn Fanpage  ▾")
+        self.button.setFixedHeight(36)
+        self.button.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        self.button.clicked.connect(self._open)
+
+        layout.addWidget(self.button)
+
+        # Popup
+        self.popup = QFrame(
+            self,
+            Qt.WindowType.Popup |
+            Qt.WindowType.FramelessWindowHint
+        )
+        self.popup.setObjectName("pagePopup")
+        self.popup.setStyleSheet(POPUP_STYLE)
+
+        body = QVBoxLayout(self.popup)
+        body.setContentsMargins(10, 10, 10, 10)
+        body.setSpacing(7)
+
+        # Search
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(
+            "Tìm tên hoặc ID Fanpage..."
+        )
+        self.search.setFixedHeight(34)
+        self.search.textChanged.connect(self._filter)
+
+        body.addWidget(self.search)
+
+        # Bulk actions
+        actions = QHBoxLayout()
+
+        self.all_button = QPushButton("Chọn tất cả")
+        self.none_button = QPushButton("Bỏ chọn")
+
+        self.all_button.clicked.connect(
+            lambda: self._set_visible(True)
+        )
+        self.none_button.clicked.connect(
+            lambda: self._set_visible(False)
+        )
+
+        actions.addWidget(self.all_button)
+        actions.addWidget(self.none_button)
+        actions.addStretch()
+
+        body.addLayout(actions)
+
+        # List
+        self.items = QListWidget()
+        self.items.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection
+        )
+        self.items.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.items.setFixedHeight(180)
+
+        body.addWidget(self.items)
+
+        # Footer
+        foot = QHBoxLayout()
+
+        self.count_label = QLabel("0 Page đã chọn")
+
+        done = QPushButton("Xong")
+        done.clicked.connect(self.popup.hide)
+
+        foot.addWidget(self.count_label)
+        foot.addStretch()
+        foot.addWidget(done)
+
+        body.addLayout(foot)
+
+    def set_pages(self, pages: List[Dict[str, Any]]):
+        """Nạp Page, bảo lưu lựa chọn còn hợp lệ."""
+
+        old = set(self.selected_page_ids())
+
+        self.items.clear()
+        self._rows.clear()
+        self._names.clear()
+
+        for page in pages:
+            pid = str(page["id"])
+            name = str(page.get("name") or "Fanpage")
+            fb_id = str(page.get("facebook_page_id") or "")
+            status = str(page.get("status") or "ready")
+
+            allowed = status == "ready"
+
+            label = (
+                f"{name} ({fb_id})" if fb_id else name
+            )
+
+            if not allowed:
+                label += "  ·  Cần kiểm tra kết nối"
+
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(10, 35))
+            self.items.addItem(item)
+
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(pid in old and allowed)
+            checkbox.setEnabled(allowed)
+            checkbox.setToolTip(label)
+
+            checkbox.toggled.connect(self._notify)
+
+            self.items.setItemWidget(item, checkbox)
+
+            self._rows.append((
+                pid,
+                item,
+                checkbox,
+                label.casefold()
+            ))
+
+            self._names[pid] = name
+
+        self._filter(self.search.text())
+        self._display()
+
+        if old != set(self.selected_page_ids()):
+            self.selection_changed.emit()
+
+    def selected_page_ids(self) -> List[str]:
+        return [
+            pid
+            for pid, _, checkbox, _ in self._rows
+            if checkbox.isChecked()
+        ]
+
+    def _filter(self, text: str):
+        keyword = text.strip().casefold()
+        visible = 0
+
+        for _, item, _, searchable in self._rows:
+            show = keyword in searchable
+            item.setHidden(not show)
+            visible += int(show)
+
+        self.items.setFixedHeight(
+            min(245, max(45, visible * 35 + 5))
+        )
+
+        self.all_button.setText(
+            "Chọn kết quả" if keyword else "Chọn tất cả"
+        )
+
+        if self.popup.isVisible():
+            self.popup.adjustSize()
+
+    def _set_visible(self, checked: bool):
+        for _, item, checkbox, _ in self._rows:
+            if not item.isHidden() and checkbox.isEnabled():
+                with QSignalBlocker(checkbox):
+                    checkbox.setChecked(checked)
+
+        self._notify()
+
+    def select_all(self):
+        self.search.clear()
+        self._set_visible(True)
+
+    def clear_selection(self):
+        for _, _, checkbox, _ in self._rows:
+            with QSignalBlocker(checkbox):
+                checkbox.setChecked(False)
+
+        self._notify()
+
+    def _notify(self, *_):
+        self._display()
+        self.selection_changed.emit()
+
+    def _display(self):
+        selected = self.selected_page_ids()
+        total = len(self._rows)
+
+        if not selected:
+            title = "Chọn Fanpage đích"
+        elif len(selected) == 1:
+            title = self._names.get(
+                selected[0],
+                "1 Fanpage"
+            )
+        else:
+            title = f"{len(selected)} Fanpage đã chọn"
+
+        self.button.setText(title + "  ▾")
+
+        self.button.setToolTip(
+            "\n".join(
+                self._names.get(pid, pid)
+                for pid in selected
+            )
+        )
+
+        self.count_label.setText(
+            f"Đã chọn {len(selected)}/{total} Page"
+        )
+
+    def _open(self):
+        anchor = self.mapToGlobal(
+            QPoint(0, self.height() + 4)
+        )
+
+        screen = (
+            QApplication.screenAt(anchor)
+            or QApplication.primaryScreen()
+        )
+
+        if screen is None:
+            return
+
+        bounds = screen.availableGeometry()
+
+        width = min(
+            max(self.width(), 325),
+            max(200, bounds.width() - 16)
+        )
+
+        self.popup.setFixedWidth(width)
+        self.popup.adjustSize()
+
+        height = self.popup.sizeHint().height()
+
+        x = max(
+            bounds.left() + 8,
+            min(
+                anchor.x(),
+                bounds.right() - width - 7
+            )
+        )
+
+        y = anchor.y()
+
+        if y + height > bounds.bottom() - 8:
+            y = self.mapToGlobal(
+                QPoint(0, -height - 4)
+            ).y()
+
+        y = max(bounds.top() + 8, y)
+
+        self.popup.move(x, y)
+        self.popup.show()
+        self.search.setFocus()
+
+
+# ==========================================================
+# MEDIA LIBRARY PICKER
+# ==========================================================
+
+class MediaPickerSimpleDialog(QDialog):
+    """Hộp thoại chọn media trong thư viện."""
+
+    def __init__(self, media_repo, parent=None):
+        super().__init__(parent)
+
+        self.selected_asset = None
+        self.setWindowTitle("Chọn media từ thư viện")
+        self.resize(650, 420)
+
+        layout = QVBoxLayout(self)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Tìm tên file...")
+        layout.addWidget(self.search)
+
+        self.table = QTableWidget(0, 3)
+
+        self.table.setHorizontalHeaderLabels([
+            "Tên file",
+            "Nguồn",
+            "Thời lượng"
+        ])
+
+        self.table.horizontalHeader().setSectionResizeMode(
+            0,
+            QHeaderView.ResizeMode.Stretch
+        )
+
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+
+        self.table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+
+        self.table.verticalHeader().hide()
+        layout.addWidget(self.table)
+
+        self.assets = media_repo.list_media_assets(
+            limit=500
+        )
+
+        self._visible = []
+
+        self.search.textChanged.connect(self._filter)
+        self.table.itemDoubleClicked.connect(
+            lambda *_: self._choose()
+        )
+
+        self._filter("")
+
+        row = QHBoxLayout()
+        row.addStretch()
+
+        cancel = QPushButton("Hủy")
+        cancel.clicked.connect(self.reject)
+
+        choose = QPushButton("Đính kèm")
+        choose.clicked.connect(self._choose)
+
+        row.addWidget(cancel)
+        row.addWidget(choose)
+
+        layout.addLayout(row)
+
+    def _filter(self, text):
+        needle = text.strip().casefold()
+
+        self._visible = [
+            asset for asset in self.assets
+            if needle in Path(
+                asset.get("local_path") or ""
+            ).name.casefold()
+        ]
+
+        self.table.setRowCount(len(self._visible))
+
+        for row, asset in enumerate(self._visible):
+            path = Path(asset.get("local_path") or "")
+
+            minutes, seconds = divmod(
+                int(asset.get("duration") or 0),
+                60
+            )
+
+            values = (
+                path.name,
+                asset.get("source_platform") or "-",
+                f"{minutes:02}:{seconds:02}"
+            )
+
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(path))
+                self.table.setItem(row, col, item)
+
+    def _choose(self):
+        index = self.table.currentRow()
+
+        if index < 0 or index >= len(self._visible):
+            QMessageBox.warning(
+                self,
+                "Chưa chọn",
+                "Vui lòng chọn một file media."
+            )
+            return
+
+        asset = self._visible[index]
+
+        if not Path(
+            asset.get("local_path") or ""
+        ).is_file():
+            QMessageBox.warning(
+                self,
+                "Thiếu file",
+                "File đã bị xóa hoặc di chuyển."
+            )
+            return
+
+        self.selected_asset = asset
+        self.accept()
+
+
+# ==========================================================
+# BACKGROUND MEDIA WORKER
+# ==========================================================
+
+class MediaImportWorker(QThread):
+    """Tải, kiểm tra và tính checksum media ngoài UI thread."""
+
+    succeeded = Signal(dict)
+    failed = Signal(str)
+    progress = Signal(int)
+
+    def __init__(
+        self,
+        *,
+        path=None,
+        url=None,
+        downloader=None,
+        processor=None,
+        output_dir=None,
+    ):
+        super().__init__()
+
+        self.path = Path(path) if path else None
+        self.url = url
+        self.downloader = downloader
+        self.processor = processor
+
+        self.output_dir = Path(
+            output_dir or (
+                Path.home() / "Downloads" / "LoviraMedia"
+            )
+        )
+
+        self._cancel = threading.Event()
+
+    def cancel(self):
+        self._cancel.set()
+
+    def run(self):
+        try:
+            if self.url:
+                if self.downloader is None:
+                    from src.lovira.integrations.downloaders.video_downloader import (
+                        VideoDownloader
+                    )
+                    self.downloader = VideoDownloader()
+
+                path = Path(
+                    self.downloader.download(
+                        self.url,
+                        output_dir=self.output_dir,
+                        progress_callback=lambda p: self.progress.emit(
+                            int(getattr(p, "percent", 0) or 0)
+                        ),
+                        is_cancelled=self._cancel.is_set,
+                    )
+                )
+            else:
+                path = self.path
+
+            if self._cancel.is_set():
+                return
+
+            if (
+                not path
+                or not path.is_file()
+                or path.stat().st_size <= 0
+            ):
+                raise ValueError(
+                    "File không tồn tại hoặc bị rỗng."
+                )
+
+            suffix = path.suffix.lower()
+
+            if suffix not in VIDEO_EXT | IMAGE_EXT:
+                raise ValueError(
+                    "Chỉ hỗ trợ MP4, MOV, AVI, MKV, "
+                    "WEBM, JPG, JPEG, PNG."
+                )
+
+            digest = hashlib.sha256()
+
+            with path.open("rb") as handle:
+                while chunk := handle.read(1024 * 1024):
+                    if self._cancel.is_set():
+                        return
+
+                    digest.update(chunk)
+
+            duration = 0.0
+            width = None
+            height = None
+
+            if (
+                suffix in VIDEO_EXT
+                and self.processor is not None
+            ):
+                try:
+                    info = self.processor.inspect_video(path)
+
+                    duration = float(
+                        getattr(info, "duration", 0) or 0
+                    )
+                    width = getattr(info, "width", None)
+                    height = getattr(info, "height", None)
+
+                except Exception as exc:
+                    logger.warning(
+                        "Không đọc được metadata: %s",
+                        exc
+                    )
+
+            if self._cancel.is_set():
+                return
+
+            self.succeeded.emit({
+                "file_path": str(path),
+                "filename": path.name,
+                "checksum": digest.hexdigest(),
+                "size_bytes": path.stat().st_size,
+                "size_mb": path.stat().st_size / 1048576,
+                "duration": duration,
+                "width": width,
+                "height": height,
+                "platform": (
+                    "url_download" if self.url else "local"
+                ),
+                "source_url": self.url,
+            })
+
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+# ==========================================================
+# POST COMPOSER WORKSPACE
+# ==========================================================
 
 class PostComposerView(QWidget):
-    """Giao diện Soạn bài, Facebook Reels và Đặt lịch đa Page 2.0."""
 
-    publish_enqueued = Signal(list)  # Phát danh sách job_id khi đã lưu hàng đợi thành công
+    publish_enqueued = Signal(list)
 
     def __init__(
         self,
         page_repo: PageRepository,
         queue_repo: PublishQueueRepository,
+        media_repo: Optional[Any] = None,
+        downloader: Optional[Any] = None,
+        media_processor: Optional[Any] = None,
+        download_dir: Optional[Path] = None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
+
         self.page_repo = page_repo
         self.queue_repo = queue_repo
+        self.media_repo = media_repo
+        self.downloader = downloader
+        self.media_processor = media_processor
+
+        self.download_dir = Path(
+            download_dir or (
+                Path.home() / "Downloads" / "LoviraMedia"
+            )
+        )
+
         self.composer_state = PostComposerState()
+        self.composer_state.content_type = ContentType.REELS
 
-        # Dữ liệu media đính kèm hiện tại
-        self.attached_media: Optional[Dict[str, Any]] = None
+        self.attached_media = None
+        self._page_names = {}
+        self._page_status = {}
+        self._worker = None
+        self._submitting = False
 
-        self._init_ui()
+        self.setObjectName("composerRoot")
+        self.setStyleSheet(COMPOSER_STYLE)
+
+        self._build_ui()
+
+        # Debounced preview
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(200)
+        self._preview_timer.timeout.connect(
+            self._update_live_preview
+        )
+
         self.reload_pages()
-        self._update_submit_button_label()
+        self._update_summary()
+        self._queue_preview()
 
-    def _init_ui(self) -> None:
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(20, 18, 20, 20)
-        main_layout.setSpacing(18)
+        app = QApplication.instance()
 
-        # CỘT TRÁI: Form Soạn thảo (Scrollable)
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        if app:
+            app.aboutToQuit.connect(self._on_exit)
 
-        container = QWidget()
-        form_layout = QVBoxLayout(container)
-        form_layout.setContentsMargins(0, 0, 8, 0)
-        form_layout.setSpacing(16)
+    # ======================================================
+    # UI HELPERS
+    # ======================================================
 
-        # 1. Chọn Fanpage đích
-        page_box = QGroupBox("1. Chọn Fanpage đích (Đăng đồng thời đa Page)")
-        page_layout = QVBoxLayout(page_box)
-        page_layout.setSpacing(10)
+    @staticmethod
+    def _label(text, title=False):
+        label = QLabel(text)
+        label.setObjectName(
+            "composerTitle" if title else "composerHint"
+        )
+        label.setWordWrap(True)
+        return label
 
-        # Header hàng nút chọn nhanh
-        btn_bar = QHBoxLayout()
-        btn_bar.setSpacing(8)
-        lbl_hint = QLabel("Tích chọn các Fanpage bạn muốn xuất bản bài viết:")
-        lbl_hint.setStyleSheet("font-size: 11px; color: #94A3B8;")
-        btn_bar.addWidget(lbl_hint)
-        btn_bar.addStretch()
+    @staticmethod
+    def _section(name):
+        box = QGroupBox(name)
+        box.setObjectName("composerSection")
 
-        self.btn_select_all = QPushButton("Chọn tất cả")
-        self.btn_select_all.setStyleSheet("font-size: 11px; padding: 3px 8px;")
-        self.btn_select_all.clicked.connect(self._select_all_pages)
-        btn_bar.addWidget(self.btn_select_all)
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(12, 14, 12, 11)
+        layout.setSpacing(7)
 
-        self.btn_deselect_all = QPushButton("Bỏ chọn")
-        self.btn_deselect_all.setStyleSheet("font-size: 11px; padding: 3px 8px;")
-        self.btn_deselect_all.clicked.connect(self._deselect_all_pages)
-        btn_bar.addWidget(self.btn_deselect_all)
-        page_layout.addLayout(btn_bar)
+        return box, layout
 
-        self.page_list_widget = QListWidget()
-        self.page_list_widget.setMaximumHeight(140)
-        self.page_list_widget.itemChanged.connect(self._on_page_selection_changed)
-        page_layout.addWidget(self.page_list_widget)
+    # ======================================================
+    # BUILD UI
+    # ======================================================
 
-        form_layout.addWidget(page_box)
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 9, 12, 9)
 
-        # 2. Loại nội dung & Media đính kèm
-        content_box = QGroupBox("2. Định dạng nội dung & Media")
-        content_layout = QVBoxLayout(content_box)
-        content_layout.setSpacing(10)
+        self.splitter = QSplitter(
+            Qt.Orientation.Horizontal
+        )
+        self.splitter.setChildrenCollapsible(False)
+        root.addWidget(self.splitter)
+
+        # Left: scrollable composer
+        left = QWidget()
+        left.setObjectName("composerLeft")
+
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 6, 0)
+        left_layout.setSpacing(0)
+
+        self.scroll = QScrollArea()
+        self.scroll.setObjectName("composerScroll")
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+        left_layout.addWidget(self.scroll, 1)
+
+        canvas = QWidget()
+        canvas.setObjectName("composerCanvas")
+
+        form = QVBoxLayout(canvas)
+        form.setContentsMargins(2, 3, 8, 9)
+        form.setSpacing(9)
+
+        self.scroll.setWidget(canvas)
+
+        # ------------------------------------------
+        # HEADER
+        # ------------------------------------------
+
+        header = QHBoxLayout()
+
+        title_group = QVBoxLayout()
+        title_group.setSpacing(2)
+
+        title_group.addWidget(
+            self._label("Soạn bài mới", title=True)
+        )
+        title_group.addWidget(
+            self._label("Một nội dung - nhiều Fanpage")
+        )
+
+        header.addLayout(title_group)
+        header.addStretch()
+
+        preview_button = QPushButton("Xem trước")
+        preview_button.clicked.connect(
+            self._open_preview_dialog
+        )
+        header.addWidget(preview_button)
+
+        form.addLayout(header)
+
+        # ------------------------------------------
+        # 1. FANPAGE DROPDOWN
+        # ------------------------------------------
+
+        box, group = self._section("1  Fanpage đích")
+
+        page_row = QHBoxLayout()
+        page_row.setSpacing(10)
+
+        self.page_dropdown = FanpageMultiSelect(self)
+        self.page_dropdown.selection_changed.connect(
+            self._on_page_selection_changed
+        )
+
+        self.lbl_selected_count = self._label(
+            "Đã chọn 0 Page"
+        )
+
+        page_row.addWidget(self.page_dropdown, 1)
+        page_row.addWidget(self.lbl_selected_count)
+
+        group.addLayout(page_row)
+        form.addWidget(box)
+
+        # ------------------------------------------
+        # 2. CONTENT TYPE & MEDIA
+        # ------------------------------------------
+
+        box, group = self._section(
+            "2  Loại bài & media"
+        )
 
         type_row = QHBoxLayout()
-        type_row.addWidget(QLabel("Định dạng xuất bản:"))
+        type_row.addWidget(self._label("Loại bài:"))
+
         self.cb_content_type = QComboBox()
-        self.cb_content_type.addItems(["Reels", "Video", "Chữ (Text)", "Hình ảnh"])
-        self.cb_content_type.currentTextChanged.connect(self._on_content_type_changed)
+        self.cb_content_type.addItems([
+            "Reels",
+            "Video",
+            "Văn bản",
+            "Hình ảnh",
+        ])
+
+        self.cb_content_type.setFixedHeight(35)
+        self.cb_content_type.setMaximumWidth(210)
+        self.cb_content_type.currentTextChanged.connect(
+            self._on_content_type_changed
+        )
+
         type_row.addWidget(self.cb_content_type)
         type_row.addStretch()
-        content_layout.addLayout(type_row)
+        group.addLayout(type_row)
 
-        # Thẻ thông tin media đính kèm
-        self.media_card = QFrame()
-        self.media_card.setObjectName("cardFrame")
-        media_card_layout = QHBoxLayout(self.media_card)
-        media_card_layout.setContentsMargins(12, 10, 12, 10)
+        # Media buttons
+        media_actions = QHBoxLayout()
 
-        self.lbl_media_icon = QLabel()
-        self.lbl_media_icon.setPixmap(get_icon("video", "#6258E8", 20).pixmap(20, 20))
-        media_card_layout.addWidget(self.lbl_media_icon)
+        self.btn_upload_video = QPushButton(
+            "Chọn từ máy"
+        )
+        self.btn_select_library = QPushButton(
+            "Thư viện"
+        )
 
-        self.lbl_media_info = QLabel("Chưa có media nào được đính kèm.")
-        self.lbl_media_info.setStyleSheet("color: #94A3B8; font-size: 12px;")
-        media_card_layout.addWidget(self.lbl_media_info, stretch=1)
+        self.btn_upload_video.clicked.connect(
+            self._pick_local_video_file
+        )
+        self.btn_select_library.clicked.connect(
+            self._open_media_library_picker
+        )
 
-        self.btn_clear_media = QPushButton("Gỡ media")
-        self.btn_clear_media.setStyleSheet("background: transparent; border: 1px solid #F0707B; color: #F0707B; border-radius: 4px; padding: 3px 8px; font-size: 11px;")
-        self.btn_clear_media.setVisible(False)
-        self.btn_clear_media.clicked.connect(self._clear_attached_media)
-        media_card_layout.addWidget(self.btn_clear_media)
+        media_actions.addWidget(self.btn_upload_video)
+        media_actions.addWidget(self.btn_select_library)
+        media_actions.addStretch()
 
-        content_layout.addWidget(self.media_card)
-        form_layout.addWidget(content_box)
+        group.addLayout(media_actions)
 
-        # 3. Soạn Caption (Nội dung bài viết)
-        caption_box = QGroupBox("3. Nội dung bài viết / Caption Reels")
-        caption_layout = QVBoxLayout(caption_box)
-        caption_layout.setSpacing(8)
+        # Attached media
+        info_row = QHBoxLayout()
 
-        # Thanh công cụ chèn hashtag nhanh
-        tools_row = QHBoxLayout()
-        tools_row.setSpacing(6)
-        lbl_quick_tag = QLabel("Gợi ý hashtag:")
-        lbl_quick_tag.setStyleSheet("font-size: 11px; color: #64748B;")
-        tools_row.addWidget(lbl_quick_tag)
+        self.lbl_media_info = self._label(
+            "Chưa đính kèm media"
+        )
 
-        sample_tags = ["#reels", "#trending", "#viral", "#review", "#fbtools"]
-        for tag in sample_tags:
-            btn_tag = QPushButton(tag)
-            btn_tag.setStyleSheet("""
-                QPushButton {
-                    background-color: #1E2A44;
-                    color: #6258E8;
-                    border: 1px solid #2B3A5A;
-                    border-radius: 4px;
-                    padding: 2px 6px;
-                    font-size: 11px;
-                }
-                QPushButton:hover {
-                    background-color: #273656;
-                    border-color: #6258E8;
-                }
-            """)
-            btn_tag.clicked.connect(lambda _, t=tag: self._append_hashtag(t))
-            tools_row.addWidget(btn_tag)
+        self.btn_clear_media = QPushButton("Gỡ file")
+        self.btn_clear_media.setObjectName("composerLink")
+        self.btn_clear_media.clicked.connect(
+            self._clear_attached_media
+        )
+        self.btn_clear_media.hide()
 
-        tools_row.addStretch()
-        caption_layout.addLayout(tools_row)
+        info_row.addWidget(self.lbl_media_info, 1)
+        info_row.addWidget(self.btn_clear_media)
+
+        group.addLayout(info_row)
+
+        # URL downloader
+        url_row = QHBoxLayout()
+
+        self.input_video_url = QLineEdit()
+        self.input_video_url.setFixedHeight(35)
+        self.input_video_url.setPlaceholderText(
+            "Dán link TikTok / Douyin / Bilibili..."
+        )
+        self.input_video_url.returnPressed.connect(
+            self._download_and_attach_url
+        )
+
+        self.btn_download_url = QPushButton("Tải link")
+        self.btn_download_url.clicked.connect(
+            self._download_and_attach_url
+        )
+
+        url_row.addWidget(self.input_video_url, 1)
+        url_row.addWidget(self.btn_download_url)
+
+        group.addLayout(url_row)
+
+        # Download status
+        status_row = QHBoxLayout()
+
+        self.lbl_download_status = self._label("")
+        self.lbl_download_status.hide()
+
+        self.btn_cancel_download = QPushButton(
+            "Hủy tải"
+        )
+        self.btn_cancel_download.clicked.connect(
+            self._request_cancel
+        )
+        self.btn_cancel_download.hide()
+
+        status_row.addWidget(
+            self.lbl_download_status, 1
+        )
+        status_row.addWidget(self.btn_cancel_download)
+
+        group.addLayout(status_row)
+
+        self.download_progress = QProgressBar()
+        self.download_progress.setObjectName(
+            "composerProgress"
+        )
+        self.download_progress.setRange(0, 100)
+        self.download_progress.setTextVisible(False)
+        self.download_progress.hide()
+
+        group.addWidget(self.download_progress)
+        form.addWidget(box)
+
+        # ------------------------------------------
+        # 3. CAPTION
+        # ------------------------------------------
+
+        box, group = self._section(
+            "3  Nội dung / caption"
+        )
+
+        tag_row = QHBoxLayout()
+        tag_row.addWidget(self._label("Hashtag:"))
+
+        for tag in ("#reels", "#review", "#viral"):
+            button = QPushButton(tag)
+            button.setObjectName("composerLink")
+
+            button.clicked.connect(
+                lambda _=False, t=tag:
+                self._append_hashtag(t)
+            )
+            tag_row.addWidget(button)
+
+        tag_row.addStretch()
+        group.addLayout(tag_row)
 
         self.caption_input = QTextEdit()
-        self.caption_input.setPlaceholderText("Nhập nội dung bài viết, tiêu đề Reels, hashtag xu hướng...")
-        self.caption_input.setMinimumHeight(110)
-        self.caption_input.textChanged.connect(self._on_caption_changed)
-        caption_layout.addWidget(self.caption_input)
+        self.caption_input.setPlaceholderText(
+            "Nhập caption bài đăng..."
+        )
+        self.caption_input.setMinimumHeight(104)
+        self.caption_input.setMaximumHeight(160)
+        self.caption_input.textChanged.connect(
+            self._on_caption_changed
+        )
 
-        # Bộ đếm ký tự & hashtag
-        self.lbl_char_count = QLabel("0 ký tự | 0 hashtag")
-        self.lbl_char_count.setStyleSheet("font-size: 11px; color: #64748B; text-align: right;")
-        self.lbl_char_count.setAlignment(Qt.AlignmentFlag.AlignRight)
-        caption_layout.addWidget(self.lbl_char_count)
+        group.addWidget(self.caption_input)
 
-        form_layout.addWidget(caption_box)
+        counter = QHBoxLayout()
 
-        # 4. Hẹn giờ theo múi giờ Việt Nam (UTC+7)
-        schedule_box = QGroupBox("4. Thời gian đăng bài (Múi giờ Việt Nam — UTC+7)")
-        schedule_layout = QVBoxLayout(schedule_box)
-        schedule_layout.setSpacing(10)
+        self.btn_overrides = QPushButton(
+            "Caption riêng từng Page"
+        )
+        self.btn_overrides.setObjectName("composerLink")
+        self.btn_overrides.clicked.connect(
+            self._edit_page_captions
+        )
 
-        self.chk_schedule = QCheckBox("Bật hẹn giờ tự động (Hệ thống sẽ chạy đăng nền trên máy)")
-        self.chk_schedule.setChecked(False)
-        self.chk_schedule.toggled.connect(self._on_schedule_toggled)
-        schedule_layout.addWidget(self.chk_schedule)
+        self.lbl_char_count = self._label(
+            "0 ký tự · 0 hashtag"
+        )
 
-        # Vùng chọn ngày giờ
-        self.schedule_picker_frame = QFrame()
-        picker_layout = QHBoxLayout(self.schedule_picker_frame)
-        picker_layout.setContentsMargins(0, 4, 0, 0)
-        picker_layout.setSpacing(10)
+        counter.addWidget(self.btn_overrides)
+        counter.addStretch()
+        counter.addWidget(self.lbl_char_count)
 
-        picker_layout.addWidget(QLabel("Thời điểm:"))
+        group.addLayout(counter)
+        form.addWidget(box)
+
+        # ------------------------------------------
+        # 4. SCHEDULE
+        # ------------------------------------------
+
+        box, group = self._section(
+            "4  Thời gian đăng"
+        )
+
+        self.chk_schedule = QCheckBox(
+            "Hẹn giờ (cần chạy nền trên máy)"
+        )
+        self.chk_schedule.toggled.connect(
+            self._on_schedule_toggled
+        )
+
+        group.addWidget(self.chk_schedule)
+
+        self.schedule_picker_frame = QWidget()
+        picker = QHBoxLayout(self.schedule_picker_frame)
+        picker.setContentsMargins(0, 0, 0, 0)
+
         self.datetime_picker = QDateTimeEdit()
-        self.datetime_picker.setDisplayFormat("dd/MM/yyyy  HH:mm")
+        self.datetime_picker.setFixedHeight(35)
+        self.datetime_picker.setDisplayFormat(
+            "dd/MM/yyyy HH:mm"
+        )
         self.datetime_picker.setCalendarPopup(True)
 
-        # Khởi tạo mặc định: Giờ Việt Nam hiện tại + 1 tiếng
-        init_time = vn_now() + timedelta(hours=1)
+        initial = vn_now() + timedelta(hours=1)
+
         self.datetime_picker.setDateTime(
-            QDateTime(init_time.year, init_time.month, init_time.day, init_time.hour, init_time.minute, 0)
+            QDateTime(
+                QDate(
+                    initial.year,
+                    initial.month,
+                    initial.day
+                ),
+                QTime(
+                    initial.hour,
+                    initial.minute,
+                    0
+                )
+            )
         )
-        self.datetime_picker.dateTimeChanged.connect(self._on_datetime_changed)
-        picker_layout.addWidget(self.datetime_picker)
 
-        self.lbl_schedule_summary = QLabel()
-        self.lbl_schedule_summary.setStyleSheet("color: #24C89A; font-weight: 600; font-size: 12px;")
-        picker_layout.addWidget(self.lbl_schedule_summary)
-        picker_layout.addStretch()
+        self.datetime_picker.dateTimeChanged.connect(
+            self._on_datetime_changed
+        )
 
-        self.schedule_picker_frame.setVisible(False)
-        schedule_layout.addWidget(self.schedule_picker_frame)
-        form_layout.addWidget(schedule_box)
+        picker.addWidget(self.datetime_picker)
+        picker.addStretch()
 
-        # 5. Khung Tóm tắt & Nút Thực hiện xuất bản
-        summary_frame = QFrame()
-        summary_frame.setObjectName("cardFrame")
-        summary_layout = QVBoxLayout(summary_frame)
-        summary_layout.setContentsMargins(16, 14, 16, 14)
-        summary_layout.setSpacing(10)
+        group.addWidget(self.schedule_picker_frame)
+        self.schedule_picker_frame.hide()
 
-        self.lbl_summary_text = QLabel("Tóm tắt: Đang chuẩn bị bài viết...")
-        self.lbl_summary_text.setStyleSheet("color: #F8FAFC; font-size: 13px; font-weight: 600;")
-        summary_layout.addWidget(self.lbl_summary_text)
+        self.lbl_schedule_summary = self._label(
+            "Đăng ngay sau khi xác nhận"
+        )
 
-        action_row = QHBoxLayout()
-        action_row.addStretch()
+        group.addWidget(self.lbl_schedule_summary)
+        form.addWidget(box)
 
-        self.btn_submit = QPushButton("🚀 Đăng ngay lên 0 Page")
-        self.btn_submit.setObjectName("primaryButton")
-        self.btn_submit.setStyleSheet("font-size: 14px; font-weight: 700; padding: 10px 24px;")
-        self.btn_submit.clicked.connect(self._handle_submit)
-        action_row.addWidget(self.btn_submit)
+        form.addStretch()
 
-        summary_layout.addLayout(action_row)
-        form_layout.addWidget(summary_frame)
+        # ------------------------------------------
+        # FIXED FOOTER
+        # ------------------------------------------
 
-        scroll_area.setWidget(container)
-        main_layout.addWidget(scroll_area, stretch=3)
+        footer = QFrame()
+        footer.setObjectName("composerFooter")
 
-        # CỘT PHẢI: Khung Live Simulated Preview
-        self.preview_widget = SimulatedPostPreview(self)
-        main_layout.addWidget(self.preview_widget, stretch=2)
+        foot_layout = QHBoxLayout(footer)
+        foot_layout.setContentsMargins(8, 8, 8, 4)
 
-        self._update_schedule_display()
+        self.lbl_summary_text = self._label(
+            "0 Page · Reels · Đăng ngay"
+        )
+        foot_layout.addWidget(self.lbl_summary_text, 1)
 
-    def reload_pages(self) -> None:
-        """Tải danh sách các Fanpage có trong cơ sở dữ liệu local."""
-        self.page_list_widget.clear()
+        self.btn_submit = QPushButton(
+            "Kiểm tra & đăng"
+        )
+        self.btn_submit.setObjectName("composerPrimary")
+        self.btn_submit.clicked.connect(
+            self._handle_submit
+        )
+
+        foot_layout.addWidget(self.btn_submit)
+        left_layout.addWidget(footer)
+
+        self.splitter.addWidget(left)
+
+        # ------------------------------------------
+        # RIGHT: LIVE PREVIEW
+        # ------------------------------------------
+
+        self.preview_pane = QFrame()
+        self.preview_pane.setObjectName(
+            "composerPreviewPane"
+        )
+
+        preview_layout = QVBoxLayout(
+            self.preview_pane
+        )
+        preview_layout.setContentsMargins(8, 8, 8, 8)
+        preview_layout.setSpacing(7)
+
+        preview_layout.addWidget(
+            self._label(
+                "XEM TRƯỚC BÀI ĐĂNG (MÔ PHỎNG)"
+            )
+        )
+
+        self.preview_widget = SimulatedPostPreview(
+            self.preview_pane
+        )
+
+        preview_layout.addWidget(
+            self.preview_widget, 1
+        )
+
+        self.splitter.addWidget(self.preview_pane)
+        self.splitter.setSizes([760, 320])
+
+    # ======================================================
+    # PAGE MANAGEMENT
+    # ======================================================
+
+    def reload_pages(self):
         pages = self.page_repo.list_pages()
-        for p in pages:
-            item = QListWidgetItem(f"📄  {p['name']} (ID: {p['facebook_page_id']})")
-            item.setData(Qt.ItemDataRole.UserRole, p["id"])
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            self.page_list_widget.addItem(item)
-        self._update_live_preview()
 
-    def _select_all_pages(self) -> None:
-        for i in range(self.page_list_widget.count()):
-            self.page_list_widget.item(i).setCheckState(Qt.CheckState.Checked)
+        self._page_names = {
+            str(p["id"]): str(
+                p.get("name") or p["id"]
+            )
+            for p in pages
+        }
 
-    def _deselect_all_pages(self) -> None:
-        for i in range(self.page_list_widget.count()):
-            self.page_list_widget.item(i).setCheckState(Qt.CheckState.Unchecked)
+        self._page_status = {
+            str(p["id"]): str(
+                p.get("status") or "ready"
+            )
+            for p in pages
+        }
 
-    def _append_hashtag(self, tag: str) -> None:
-        current = self.caption_input.toPlainText()
-        if current and not current.endswith(" ") and not current.endswith("\n"):
-            current += " "
-        self.caption_input.setPlainText(current + tag + " ")
-        self.caption_input.moveCursor(self.caption_input.textCursor().MoveOperation.End)
-
-    def attach_video_data(self, media_data: Dict[str, Any]) -> None:
-        """Tiếp nhận dữ liệu video từ tab Tải video hoặc Thư viện (1-click flow)."""
-        self.attached_media = media_data
-        file_path = media_data.get("file_path", "")
-        file_name = file_path.split("/")[-1].split("\\")[-1]
-        self.lbl_media_info.setText(f"🎬 Video: {file_name} (ID: {media_data.get('media_id')})")
-        self.btn_clear_media.setVisible(True)
-
-        # Gợi ý caption nếu có tiêu đề video
-        if media_data.get("title") and not self.caption_input.toPlainText():
-            self.caption_input.setPlainText(media_data["title"])
-
-        # Mặc định chọn Reels
-        self.cb_content_type.setCurrentText("Reels")
-        self._update_summary()
-        self._update_live_preview()
-
-    def _clear_attached_media(self) -> None:
-        self.attached_media = None
-        self.lbl_media_info.setText("Chưa có media nào được đính kèm.")
-        self.btn_clear_media.setVisible(False)
-        self._update_summary()
-        self._update_live_preview()
+        self.page_dropdown.set_pages(pages)
+        self._on_page_selection_changed()
 
     def _get_selected_page_ids(self) -> List[str]:
-        selected = []
-        for i in range(self.page_list_widget.count()):
-            item = self.page_list_widget.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                selected.append(item.data(Qt.ItemDataRole.UserRole))
-        return selected
+        return self.page_dropdown.selected_page_ids()
 
-    def _on_page_selection_changed(self, _) -> None:
-        self._update_submit_button_label()
+    def _select_all_pages(self):
+        self.page_dropdown.select_all()
+
+    def _deselect_all_pages(self):
+        self.page_dropdown.clear_selection()
+
+    def _on_page_selection_changed(self, *_):
+        self.composer_state.selected_page_ids = (
+            self._get_selected_page_ids()
+        )
+
         self._update_summary()
-        self._update_live_preview()
+        self._queue_preview()
 
-    def _on_content_type_changed(self, text: str) -> None:
-        type_map = {
+    # ======================================================
+    # CONTENT TYPE
+    # ======================================================
+
+    def _on_content_type_changed(self, text):
+        self.composer_state.content_type = {
             "Reels": ContentType.REELS,
             "Video": ContentType.VIDEO,
-            "Chữ (Text)": ContentType.TEXT,
+            "Văn bản": ContentType.TEXT,
             "Hình ảnh": ContentType.PHOTO,
-        }
-        self.composer_state.content_type = type_map.get(text, ContentType.REELS)
-        self._update_summary()
-        self._update_live_preview()
-
-    def _on_caption_changed(self) -> None:
-        caption = self.caption_input.toPlainText()
-        self.composer_state.common_caption = caption
-
-        # Đếm ký tự và hashtag
-        words = caption.split()
-        hashtags = [w for w in words if w.startswith("#") and len(w) > 1]
-        self.lbl_char_count.setText(f"{len(caption)} ký tự | {len(hashtags)} hashtags")
+        }[text]
 
         self._update_summary()
-        self._update_live_preview()
+        self._queue_preview()
 
-    def _on_schedule_toggled(self, checked: bool) -> None:
-        """
-        AC-06 & AC-41:
-        - Bật: hiển thị datetime picker.
-        - Tắt: ẩn datetime picker nhưng KHÔNG xóa giờ đã chọn, KHÔNG tự động đăng bài!
-        """
-        self.composer_state.is_scheduled = checked
-        self.schedule_picker_frame.setVisible(checked)
-        self._update_submit_button_label()
-        self._update_summary()
+    # ======================================================
+    # CAPTION
+    # ======================================================
 
-    def _on_datetime_changed(self, qdt: QDateTime) -> None:
-        py_dt = qdt.toPython()
-        self.composer_state.scheduled_vn_datetime = py_dt
+    def _append_hashtag(self, tag):
+        cursor = self.caption_input.textCursor()
+
+        before = cursor.position()
+        original = self.caption_input.toPlainText()
+
+        prefix = (
+            " "
+            if before > 0
+            and not original[before - 1].isspace()
+            else ""
+        )
+
+        cursor.insertText(prefix + tag + " ")
+        self.caption_input.setFocus()
+
+    def _on_caption_changed(self):
+        text = self.caption_input.toPlainText()
+
+        self.composer_state.general_caption = text
+
+        count = sum(
+            word.startswith("#") and len(word) > 1
+            for word in text.split()
+        )
+
+        self.lbl_char_count.setText(
+            f"{len(text)} ký tự · {count} hashtag"
+        )
+
+        self._queue_preview()
+
+    def _edit_page_captions(self):
+        ids = self._get_selected_page_ids()
+
+        if not ids:
+            QMessageBox.information(
+                self,
+                "Chưa chọn Page",
+                "Hãy chọn Fanpage trước."
+            )
+            return
+
+        edits = {}
+
+        for pid in ids:
+            override = (
+                self.composer_state
+                .page_overrides.get(pid)
+            )
+            edits[pid] = (
+                override.caption_override if override else ""
+            )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(
+            "Caption riêng cho Fanpage"
+        )
+        dlg.resize(500, 340)
+
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(
+            QLabel("Bỏ trống để sử dụng caption chung.")
+        )
+
+        selector = QComboBox()
+
+        for pid in ids:
+            selector.addItem(
+                self._page_names.get(pid, pid),
+                pid
+            )
+
+        layout.addWidget(selector)
+
+        editor = QTextEdit()
+        layout.addWidget(editor)
+
+        active = [ids[0]]
+        editor.setPlainText(edits[active[0]] or "")
+
+        def select(index):
+            edits[active[0]] = editor.toPlainText()
+            active[0] = selector.itemData(index)
+            editor.setPlainText(edits[active[0]] or "")
+
+        selector.currentIndexChanged.connect(select)
+
+        row = QHBoxLayout()
+        row.addStretch()
+
+        cancel = QPushButton("Hủy")
+        cancel.clicked.connect(dlg.reject)
+
+        accept = QPushButton("Lưu")
+        accept.clicked.connect(dlg.accept)
+
+        row.addWidget(cancel)
+        row.addWidget(accept)
+
+        layout.addLayout(row)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            edits[active[0]] = editor.toPlainText()
+
+            for pid, value in edits.items():
+                self.composer_state.set_override_caption(
+                    pid,
+                    value.strip() or None
+                )
+
+            self._queue_preview()
+
+    # ======================================================
+    # SCHEDULE
+    # ======================================================
+
+    def _vn_datetime(self):
+        dt = self.datetime_picker.dateTime()
+
+        date = dt.date()
+        time = dt.time()
+
+        return create_vn_datetime(
+            date.year(),
+            date.month(),
+            date.day(),
+            time.hour(),
+            time.minute()
+        )
+
+    def _on_schedule_toggled(self, enabled):
+        self.composer_state.toggle_schedule(enabled)
+        self.schedule_picker_frame.setVisible(enabled)
+
         self._update_schedule_display()
         self._update_summary()
 
-    def _update_schedule_display(self) -> None:
-        qdt = self.datetime_picker.dateTime().toPython()
-        vn_str = format_vn_display(qdt)
-        utc_iso = vn_datetime_to_utc_iso(qdt)
-        self.lbl_schedule_summary.setText(f"➔ {vn_str} [UTC: {utc_iso}]")
+    def _on_datetime_changed(self, *_):
+        self._update_schedule_display()
 
-    def _update_submit_button_label(self) -> None:
-        count = len(self._get_selected_page_ids())
+    def _update_schedule_display(self):
         if self.chk_schedule.isChecked():
-            self.btn_submit.setText(f"📅 Đặt lịch cho {count} Page")
-        else:
-            self.btn_submit.setText(f"🚀 Đăng ngay lên {count} Page")
-
-    def _update_summary(self) -> None:
-        pages = self._get_selected_page_ids()
-        c_type = self.cb_content_type.currentText()
-        if not pages:
-            self.lbl_summary_text.setText("⚠️ Chưa chọn Fanpage đích nào.")
-            return
-
-        mode_str = "Hẹn giờ tự động" if self.chk_schedule.isChecked() else "Đăng ngay lập tức"
-        media_str = "Có video gắn kèm" if self.attached_media else "Không có file đính kèm"
-        self.lbl_summary_text.setText(
-            f"Tóm tắt: Đăng {c_type} lên {len(pages)} Fanpage ({mode_str}) — {media_str}."
-        )
-
-    def _update_live_preview(self) -> None:
-        """Đồng bộ hóa dữ liệu thời gian thực sang cột Preview di động."""
-        pages = self._get_selected_page_ids()
-        page_name = ""
-        if pages:
-            p_obj = self.page_repo.get_page(pages[0])
-            if p_obj:
-                page_name = p_obj.get("name", "")
-
-        caption = self.caption_input.toPlainText()
-        media_path = self.attached_media.get("file_path") if self.attached_media else None
-        c_type = self.cb_content_type.currentText()
-
-        self.preview_widget.update_preview(
-            page_name=page_name,
-            caption=caption,
-            media_path=media_path,
-            content_type=c_type,
-        )
-
-    def _handle_submit(self) -> None:
-        """
-        Quy trình Đăng / Đặt lịch:
-        - Xác thực input
-        - Tạo ContentSnapshot bất biến (AC-19)
-        - Enqueue batch nguyên tử với client_request_id (AC-15)
-        """
-        selected_pages = self._get_selected_page_ids()
-        if not selected_pages:
-            QMessageBox.warning(self, "Chưa chọn Page", "Vui lòng chọn ít nhất một Fanpage đích.")
-            return
-
-        c_type = self.composer_state.content_type
-        caption = self.caption_input.toPlainText().strip()
-
-        # Kiểm tra yêu cầu media cho Reels / Video
-        if c_type in (ContentType.REELS, ContentType.VIDEO) and not self.attached_media:
-            QMessageBox.warning(self, "Thiếu video", f"Định dạng {c_type.value.upper()} bắt buộc phải có video đính kèm.")
-            return
-
-        # Thời gian đăng
-        is_scheduled = self.chk_schedule.isChecked()
-        schedule_mode = ScheduleMode.LOCAL if is_scheduled else ScheduleMode.LOCAL
-        scheduled_utc = vn_datetime_to_utc_iso(self.datetime_picker.dateTime().toPython()) if is_scheduled else vn_datetime_to_utc_iso(vn_now())
-
-        # Khóa nút tránh bấm liên tiếp (AC-15)
-        self.btn_submit.setEnabled(False)
-        self.btn_submit.setText("Đang khởi tạo tác vụ...")
-
-        client_request_id = f"req_{uuid.uuid4().hex[:16]}"
-        batch_id = f"batch_{uuid.uuid4().hex[:12]}"
-
-        media_id = self.attached_media.get("media_id") if self.attached_media else None
-        media_path = self.attached_media.get("file_path") if self.attached_media else None
-
-        snapshots: List[ContentSnapshot] = []
-        for p_id in selected_pages:
-            snap = ContentSnapshot(
-                batch_id=batch_id,
-                page_id=p_id,
-                content_type=c_type,
-                final_caption=caption,
-                primary_media_id=media_id,
-                media_path=media_path,
-                schedule_mode=schedule_mode,
-                scheduled_at_utc=scheduled_utc,
+            self.lbl_schedule_summary.setText(
+                f"{self._vn_datetime():%H:%M %d/%m/%Y}"
+                " (UTC+7) · Lịch trên máy"
             )
-            snapshots.append(snap)
+        else:
+            self.lbl_schedule_summary.setText(
+                "Đăng ngay sau khi xác nhận"
+            )
 
-        try:
-            job_ids = self.queue_repo.enqueue_batch(client_request_id, snapshots)
-            action_desc = "đặt lịch" if is_scheduled else "đưa vào hàng đợi đăng ngay"
+    # ======================================================
+    # SUMMARY
+    # ======================================================
+
+    def _update_submit_button_label(self):
+        self.btn_submit.setText(
+            "Kiểm tra lịch đăng"
+            if self.chk_schedule.isChecked()
+            else "Kiểm tra & đăng"
+        )
+
+        self.btn_submit.setEnabled(
+            bool(self._get_selected_page_ids())
+            and not self._submitting
+            and self._worker is None
+        )
+
+    def _update_summary(self):
+        ids = self._get_selected_page_ids()
+
+        self.lbl_selected_count.setText(
+            f"Đã chọn {len(ids)} Page"
+        )
+
+        mode = (
+            "Hẹn giờ"
+            if self.chk_schedule.isChecked()
+            else "Đăng ngay"
+        )
+
+        self.lbl_summary_text.setText(
+            f"{len(ids)} Page · "
+            f"{self.cb_content_type.currentText()} · "
+            f"{mode}"
+        )
+
+        self._update_submit_button_label()
+
+    # ======================================================
+    # PICK MEDIA FROM COMPUTER
+    # ======================================================
+
+    def _pick_local_video_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Chọn ảnh hoặc video",
+            str(self.download_dir),
+            "Media (*.mp4 *.mov *.avi *.mkv "
+            "*.webm *.jpg *.jpeg *.png)"
+        )
+
+        if path:
+            self._start_worker(path=path)
+
+    # ======================================================
+    # PICK FROM LIBRARY
+    # ======================================================
+
+    def _open_media_library_picker(self):
+        if not self.media_repo:
             QMessageBox.information(
                 self,
-                "Thành công",
-                f"Đã {action_desc} thành công cho {len(job_ids)} Fanpage!\n"
-                f"Mã nhóm công việc: {batch_id}",
+                "Thư viện",
+                "Chưa có thư viện media."
             )
-            self.publish_enqueued.emit(job_ids)
+            return
 
-            # Xóa form sau khi gửi thành công
+        dlg = MediaPickerSimpleDialog(
+            self.media_repo, self
+        )
+
+        if (
+            dlg.exec() == QDialog.DialogCode.Accepted
+            and dlg.selected_asset
+        ):
+            asset = dlg.selected_asset
+
+            self.attach_video_data({
+                "file_path": asset["local_path"],
+                "media_id": asset["id"],
+                "checksum": asset.get("checksum"),
+                "duration": asset.get("duration"),
+            })
+
+    # ======================================================
+    # DOWNLOAD VIDEO FROM URL
+    # ======================================================
+
+    def _download_and_attach_url(self):
+        url = self.input_video_url.text().strip()
+
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+
+        if (
+            parsed.scheme not in ("http", "https")
+            or not hostname
+        ):
+            QMessageBox.warning(
+                self,
+                "Liên kết",
+                "Cần liên kết HTTP(S) hợp lệ."
+            )
+            return
+
+        # Chặn URL nội bộ cơ bản
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            address = None
+
+        if (
+            hostname.lower() == "localhost"
+            or hostname.lower().endswith(".local")
+            or (address and not address.is_global)
+        ):
+            QMessageBox.warning(
+                self,
+                "Liên kết",
+                "Không hỗ trợ địa chỉ mạng nội bộ."
+            )
+            return
+
+        self._start_worker(url=url)
+
+    # ======================================================
+    # BACKGROUND WORKER
+    # ======================================================
+
+    def _start_worker(self, *, path=None, url=None):
+        if self._worker is not None:
+            return
+
+        worker = MediaImportWorker(
+            path=path,
+            url=url,
+            downloader=self.downloader,
+            processor=self.media_processor,
+            output_dir=self.download_dir,
+        )
+
+        self._worker = worker
+
+        worker.progress.connect(
+            self.download_progress.setValue
+        )
+        worker.succeeded.connect(self._media_loaded)
+        worker.failed.connect(self._media_failed)
+        worker.finished.connect(self._media_finished)
+        worker.finished.connect(worker.deleteLater)
+
+        self.lbl_download_status.setText(
+            "Đang xử lý media..."
+        )
+        self.lbl_download_status.show()
+
+        self.download_progress.setValue(0)
+        self.download_progress.show()
+
+        self.btn_cancel_download.show()
+        self.btn_cancel_download.setEnabled(True)
+
+        for button in (
+            self.btn_upload_video,
+            self.btn_select_library,
+            self.btn_download_url,
+        ):
+            button.setEnabled(False)
+
+        self._update_submit_button_label()
+        worker.start()
+
+    def _request_cancel(self):
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+
+            self.lbl_download_status.setText(
+                "Đang dừng tải..."
+            )
+            self.btn_cancel_download.setEnabled(False)
+
+    def _media_loaded(self, data):
+        if self.media_repo:
+            try:
+                data["media_id"] = (
+                    self.media_repo.add_media_asset(
+                        local_path=Path(data["file_path"]),
+                        checksum=data["checksum"],
+                        size_bytes=data["size_bytes"],
+                        duration=data["duration"],
+                        source_platform=data["platform"],
+                        source_url=data["source_url"],
+                        width=data["width"],
+                        height=data["height"],
+                    )
+                )
+
+            except Exception as exc:
+                logger.warning(
+                    "Không lưu được vào thư viện: %s",
+                    exc
+                )
+
+                self.lbl_download_status.setText(
+                    "File đã có nhưng chưa lưu được "
+                    "vào thư viện."
+                )
+
+        self.attach_video_data(data)
+
+        if data.get("source_url"):
+            self.input_video_url.clear()
+
+        if data.get("media_id"):
+            self.lbl_download_status.setText(
+                "Đã tải và thêm vào thư viện."
+            )
+        else:
+            self.lbl_download_status.setText(
+                "Đã đính kèm file."
+            )
+
+    def _media_failed(self, message):
+        self.lbl_download_status.setText(
+            "Lỗi: " + message
+        )
+
+        QMessageBox.warning(
+            self,
+            "Lỗi xử lý media",
+            message
+        )
+
+    def _media_finished(self):
+        self._worker = None
+
+        self.btn_cancel_download.hide()
+        self.download_progress.hide()
+
+        for button in (
+            self.btn_upload_video,
+            self.btn_select_library,
+            self.btn_download_url,
+        ):
+            button.setEnabled(True)
+
+        self._update_submit_button_label()
+
+    # ======================================================
+    # ATTACH MEDIA
+    # ======================================================
+
+    def attach_video_data(
+        self,
+        data: Dict[str, Any]
+    ):
+        """
+        Tương thích với Video Workspace.
+        Nhận cả video và ảnh.
+        """
+
+        path = Path(data.get("file_path") or "")
+
+        if (
+            not path.is_file()
+            or path.suffix.lower()
+            not in VIDEO_EXT | IMAGE_EXT
+        ):
+            QMessageBox.warning(
+                self,
+                "Media",
+                "Không tìm thấy file hoặc định dạng "
+                "không hỗ trợ."
+            )
+            return
+
+        self.attached_media = dict(data)
+        self.attached_media["file_path"] = str(path)
+
+        size_mb = path.stat().st_size / 1048576
+
+        self.lbl_media_info.setText(
+            f"{path.name} · {size_mb:.1f} MB"
+        )
+        self.lbl_media_info.setToolTip(str(path))
+
+        self.btn_clear_media.show()
+
+        if path.suffix.lower() in IMAGE_EXT:
+            self.cb_content_type.setCurrentText(
+                "Hình ảnh"
+            )
+
+        elif self.cb_content_type.currentText() in (
+            "Văn bản", "Hình ảnh"
+        ):
+            self.cb_content_type.setCurrentText(
+                "Reels"
+            )
+
+        if not self.caption_input.toPlainText().strip():
+            suggestion = (
+                data.get("caption")
+                or data.get("title")
+            )
+
+            if suggestion:
+                self.caption_input.setPlainText(
+                    str(suggestion)
+                )
+
+        self._update_summary()
+        self._queue_preview()
+
+    def _clear_attached_media(self):
+        self.attached_media = None
+
+        self.lbl_media_info.setText(
+            "Chưa đính kèm media"
+        )
+        self.lbl_media_info.setToolTip("")
+
+        self.btn_clear_media.hide()
+        self._queue_preview()
+
+    # ======================================================
+    # LIVE PREVIEW
+    # ======================================================
+
+    def _queue_preview(self):
+        if hasattr(self, "_preview_timer"):
+            self._preview_timer.start()
+
+    def _preview_values(self):
+        ids = self._get_selected_page_ids()
+        pid = ids[0] if ids else None
+
+        return {
+            "page_name": self._page_names.get(
+                pid, "Fanpage"
+            ),
+            "caption": (
+                self.composer_state.get_effective_caption(pid)
+                if pid
+                else self.caption_input.toPlainText()
+            ),
+            "media_path": (
+                self.attached_media.get("file_path")
+                if self.attached_media
+                else None
+            ),
+            "content_type": (
+                self.cb_content_type.currentText()
+            ),
+        }
+
+    def _update_live_preview(self):
+        try:
+            self.preview_widget.update_preview(
+                **self._preview_values()
+            )
+
+        except Exception as exc:
+            logger.warning(
+                "Preview gặp lỗi: %s",
+                exc
+            )
+
+    def _open_preview_dialog(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(
+            "Xem trước bài đăng (mô phỏng)"
+        )
+        dlg.resize(410, 680)
+
+        layout = QVBoxLayout(dlg)
+
+        widget = SimulatedPostPreview(dlg)
+        layout.addWidget(widget, 1)
+
+        widget.update_preview(
+            **self._preview_values()
+        )
+
+        close = QPushButton("Đóng")
+        close.clicked.connect(dlg.accept)
+        layout.addWidget(close)
+
+        dlg.exec()
+
+    # ======================================================
+    # RESPONSIVE PREVIEW
+    # ======================================================
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+
+        if hasattr(self, "preview_pane"):
+            if self.width() < 960:
+                self.preview_pane.hide()
+            elif self.width() > 1040:
+                self.preview_pane.show()
+
+    # ======================================================
+    # WORKER SHUTDOWN
+    # ======================================================
+
+    def _on_exit(self):
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+
+            if not self._worker.wait(10000):
+                logger.warning(
+                    "Media worker chưa dừng. "
+                    "Shell cần đợi thread hoàn tất "
+                    "trước khi hủy view."
+                )
+
+    # ======================================================
+    # VALIDATION & SUBMIT
+    # ======================================================
+
+    def _handle_submit(self):
+        if self._submitting or self._worker is not None:
+            return
+
+        ids = self._get_selected_page_ids()
+
+        if not ids:
+            QMessageBox.warning(
+                self,
+                "Chưa chọn Page",
+                "Vui lòng chọn ít nhất một Fanpage."
+            )
+            return
+
+        not_ready = [
+            pid for pid in ids
+            if self._page_status.get(pid) != "ready"
+        ]
+
+        if not_ready:
+            QMessageBox.warning(
+                self,
+                "Fanpage chưa sẵn sàng",
+                "Một số Page chưa được xác minh quyền. "
+                "Hãy kiểm tra lại kết nối."
+            )
+            return
+
+        ctype = self.composer_state.content_type
+
+        captions = {
+            pid: self.composer_state
+                .get_effective_caption(pid)
+                .strip()
+            for pid in ids
+        }
+
+        media = self.attached_media
+
+        suffix = (
+            Path(media["file_path"]).suffix.lower()
+            if media
+            else ""
+        )
+
+        # Validate text
+        if ctype == ContentType.TEXT:
+            if media or any(
+                not text for text in captions.values()
+            ):
+                QMessageBox.warning(
+                    self,
+                    "Bài văn bản",
+                    "Bài văn bản cần caption cho từng Page "
+                    "và không đính kèm media."
+                )
+                return
+
+        # Validate video
+        if ctype in (
+            ContentType.REELS,
+            ContentType.VIDEO,
+        ):
+            if suffix not in VIDEO_EXT:
+                QMessageBox.warning(
+                    self,
+                    "Thiếu video",
+                    "Vui lòng đính kèm một file video "
+                    "hợp lệ."
+                )
+                return
+
+        # Validate photo
+        if ctype == ContentType.PHOTO:
+            if suffix not in IMAGE_EXT:
+                QMessageBox.warning(
+                    self,
+                    "Thiếu ảnh",
+                    "Vui lòng đính kèm ảnh JPG hoặc PNG."
+                )
+                return
+
+        # Validate media path
+        if media and not Path(
+            media["file_path"]
+        ).is_file():
+            QMessageBox.warning(
+                self,
+                "File không tồn tại",
+                "Media đã bị xóa hoặc di chuyển."
+            )
+            return
+
+        # Validate schedule time
+        is_scheduled = self.chk_schedule.isChecked()
+
+        if is_scheduled:
+            date_vn = self._vn_datetime()
+
+            valid, reason = validate_schedule_time(
+                date_vn
+            )
+
+            if not valid:
+                QMessageBox.warning(
+                    self,
+                    "Giờ hẹn không hợp lệ",
+                    reason
+                )
+                return
+
+            scheduled_utc = vn_datetime_to_utc_iso(
+                date_vn
+            )
+
+            when = (
+                f"{date_vn:%H:%M %d/%m/%Y} (UTC+7)"
+                " - lịch trên máy"
+            )
+
+        else:
+            scheduled_utc = vn_datetime_to_utc_iso(
+                vn_now()
+            )
+            when = "Đăng ngay sau khi tạo hàng đợi"
+
+        # Confirmation
+        names = "\n".join(
+            "• " + self._page_names.get(pid, pid)
+            for pid in ids[:8]
+        )
+
+        if len(ids) > 8:
+            names += (
+                f"\n... và {len(ids) - 8} Fanpage khác"
+            )
+
+        media_name = (
+            Path(media["file_path"]).name
+            if media else "Không"
+        )
+
+        confirmation = (
+            f"Loại: {self.cb_content_type.currentText()}\n"
+            f"Số Page: {len(ids)}\n"
+            f"{names}\n\n"
+            f"Media: {media_name}\n"
+            f"Giờ: {when}\n\n"
+            f"Tạo {len(ids)} tác vụ đăng bài?"
+        )
+
+        reply = QMessageBox.question(
+            self,
+            "Xác nhận trước khi đăng",
+            confirmation,
+            QMessageBox.StandardButton.Yes |
+            QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Lock submission
+        self._submitting = True
+        self._update_submit_button_label()
+
+        try:
+            batch_id = (
+                "batch_" + uuid.uuid4().hex[:12]
+            )
+
+            request_id = (
+                "composer_" + uuid.uuid4().hex[:16]
+            )
+
+            snapshots = []
+
+            for pid in ids:
+                snapshots.append(
+                    ContentSnapshot(
+                        batch_id=batch_id,
+                        page_id=pid,
+                        content_type=ctype,
+                        final_caption=captions[pid],
+                        primary_media_id=(
+                            media.get("media_id")
+                            if media else None
+                        ),
+                        media_checksum=(
+                            media.get("checksum")
+                            if media else None
+                        ),
+                        media_path=(
+                            media.get("file_path")
+                            if media else None
+                        ),
+                        scheduled_at_utc=scheduled_utc,
+                        schedule_mode=ScheduleMode.LOCAL,
+                    )
+                )
+
+            jobs = self.queue_repo.enqueue_batch(
+                request_id,
+                snapshots,
+            )
+
+            if not jobs:
+                raise RuntimeError(
+                    "Không tạo được tác vụ nào."
+                )
+
+            self.publish_enqueued.emit(jobs)
+
+            QMessageBox.information(
+                self,
+                "Đã thêm vào hàng đợi",
+                f"Đã tạo {len(jobs)} tác vụ.\n"
+                "Xem tiến độ ở mục Lịch đăng.\n\n"
+                "Thông báo này không có nghĩa là bài "
+                "đã xuất bản lên Facebook."
+            )
+
+            # Reset content after enqueue
             self.caption_input.clear()
+            self.composer_state.page_overrides.clear()
             self._clear_attached_media()
-        except Exception as e:
-            QMessageBox.critical(self, "Lỗi đăng bài", f"Không thể khởi tạo công việc đăng bài: {e}")
+            self._queue_preview()
+
+        except Exception as exc:
+            logger.exception(
+                "Không thêm được vào hàng đợi"
+            )
+
+            QMessageBox.critical(
+                self,
+                "Lỗi tạo tác vụ",
+                str(exc)
+            )
+
         finally:
-            self.btn_submit.setEnabled(True)
+            self._submitting = False
             self._update_submit_button_label()

@@ -339,8 +339,9 @@ class BulkImportDialog(QDialog):
 
     def _export_template(self) -> None:
         """Xuất file mẫu Excel (.xlsx) kèm hướng dẫn chi tiết."""
+        default_save_path = str(Path.home() / "Downloads" / "Mau_Dang_Bai_Lovira.xlsx")
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Lưu file Sheet mẫu Excel", "Mau_Dang_Bai_Lovira.xlsx", "Excel Files (*.xlsx);;CSV Files (*.csv)"
+            self, "Lưu file Sheet mẫu Excel", default_save_path, "Excel Files (*.xlsx);;CSV Files (*.csv)"
         )
         if not file_path:
             return
@@ -383,11 +384,21 @@ class BulkImportDialog(QDialog):
                     writer.writeheader()
                     writer.writerows(sample_data)
 
-            QMessageBox.information(
+            reply = QMessageBox.question(
                 self,
                 "Xuất file thành công",
-                f"Đã tạo file mẫu thành công tại:\n{file_path}\n\nBạn có thể mở file này ra chỉnh sửa rồi bấm 'Chọn file để Nhập'!",
+                f"Đã tạo file mẫu thành công tại:\n{file_path}\n\nBạn có muốn mở ngay tệp này trong Excel để chỉnh sửa không?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
+            if reply == QMessageBox.StandardButton.Yes:
+                import os, sys
+                norm_p = os.path.normpath(file_path)
+                if sys.platform == "win32":
+                    os.startfile(norm_p)
+                else:
+                    from PySide6.QtGui import QDesktopServices
+                    from PySide6.QtCore import QUrl
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(norm_p))
         except Exception as e:
             QMessageBox.critical(self, "Lỗi xuất file", f"Không thể lưu file mẫu:\n{e}")
 
