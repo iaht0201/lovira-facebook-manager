@@ -83,6 +83,7 @@ def test_bulk_import_empty_or_unknown_page_id_no_fallback(qapp, temp_db, tmp_pat
         dlg._start_import_process()
         if dlg.worker:
             dlg.worker.wait(5000)
+        qapp.processEvents()
 
     # Không được tạo bất kỳ job nào!
     jobs = queue_repo.list_jobs()
@@ -104,6 +105,7 @@ def test_bulk_import_empty_or_unknown_page_id_no_fallback(qapp, temp_db, tmp_pat
         dlg._start_import_process()
         if dlg.worker:
             dlg.worker.wait(5000)
+        qapp.processEvents()
 
     # Vẫn không được tạo bất kỳ job nào!
     jobs = queue_repo.list_jobs()
@@ -125,6 +127,8 @@ def test_bulk_import_empty_or_unknown_page_id_no_fallback(qapp, temp_db, tmp_pat
         dlg._start_import_process()
         if dlg.worker:
             dlg.worker.wait(5000)
+        qapp.processEvents()
+        dlg.close()
 
     jobs = queue_repo.list_jobs()
     assert len(jobs) == 2, "Từ khóa ALL tường minh phải tạo job cho cả 2 Page."

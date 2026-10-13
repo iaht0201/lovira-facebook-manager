@@ -462,3 +462,10 @@ class BulkImportDialog(QDialog):
         self.btn_start_import.setEnabled(True)
         self.lbl_status.setText(f"❌ Lỗi: {err_msg}")
         QMessageBox.critical(self, "Lỗi trong tiến trình import", f"Có lỗi xảy ra:\n{err_msg}")
+
+    def closeEvent(self, event) -> None:
+        """Đảm bảo dừng worker an toàn trước khi đóng dialog."""
+        if self.worker and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait(3000)
+        super().closeEvent(event)

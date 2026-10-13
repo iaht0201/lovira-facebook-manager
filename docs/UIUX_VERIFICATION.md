@@ -123,4 +123,34 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   2. QSS Linter: 0 duplicate selectors trong stylesheet phân tầng.
   3. SVG Icons: 100% vector SVG (Lucide style) load và render thành công trên QIcon / QPixmap mà không dùng font ngoài.
 
+---
+
+### Task UX-03: Desktop Shell & 10 Routes
+
+- **Thời gian:** 13/10/2026 12:35 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Command 1:** `pytest tests/test_ux03_shell_and_routes.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux03_shell_and_routes.py::test_shell_10_routes_registered_and_navigable PASSED [ 20%]
+  tests/test_ux03_shell_and_routes.py::test_1click_video_to_composer_syncs_sidebar_selection PASSED [ 40%]
+  tests/test_ux03_shell_and_routes.py::test_global_page_context_and_top_bar_search PASSED [ 60%]
+  tests/test_ux03_shell_and_routes.py::test_comments_workspace_honest_state_not_blank PASSED [ 80%]
+  tests/test_ux03_shell_and_routes.py::test_main_window_close_event_tray_integration PASSED [100%]
+  ============================== 5 passed in 1.24s ==============================
+  ```
+- **Command 2 (Full Gate):** `pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 89 items
+  ...
+  ============================= 89 passed in 8.28s ==============================
+  ```
+- **Các lỗi audit đã giải quyết triệt để:**
+  1. A-01: Màn hình Comments không còn là placeholder rỗng; tích hợp `CommentsWorkspaceView` với banner quyền hạn Facebook trung thực.
+  2. A-02: `NavigationController` và `Route` enum quản lý 10 routes; luồng 1-click từ Video sang Composer tự động làm sáng nút Soạn bài trên Sidebar, không lệch index.
+  3. A-03: `TopCommandBar` tích hợp ô tìm kiếm nhanh với debounce 250ms và phím tắt `Ctrl+K`.
+  4. A-04: Header Page Selector kết nối `GlobalPageContext` phát signal lọc dữ liệu cho các workspace con.
+
+
 

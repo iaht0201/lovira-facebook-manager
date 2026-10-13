@@ -13,7 +13,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import Optional
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 from PySide6.QtGui import QIcon
 
 from src.lovira.config.paths import AppPaths
@@ -151,11 +151,14 @@ def create_application() -> MainWindow:
         tray_manager=tray_manager,
     )
 
-    # 9. Khởi tạo các Views chuyên biệt và tích hợp vào MainWindow.stacked_widget
+    # 9. Khởi tạo các Views chuyên biệt và tích hợp vào MainWindow.nav_controller
+    from src.lovira.ui.shell.navigation import Route
     from src.lovira.ui.views.overview_workspace import OverviewWorkspaceView
     from src.lovira.ui.quick_post_dialog import QuickPostDialog
     from src.lovira.ui.views.bulk_import_dialog import BulkImportDialog
     from src.lovira.ui.views.pages_workspace import ConnectPageDialog
+    from src.lovira.ui.views.comments_workspace import CommentsWorkspaceView
+    from src.lovira.ui.views.activity_workspace import ActivityWorkspaceView
 
     view_overview = OverviewWorkspaceView(
         db_manager=db_manager,
@@ -178,17 +181,56 @@ def create_application() -> MainWindow:
         queue_repo=queue_repo,
         recovery_manager=recovery_manager,
     )
+    view_comments = CommentsWorkspaceView(
+        comment_repo=comment_repo,
+        reply_repo=reply_repo,
+        page_repo=page_repo,
+    )
+    view_activity = ActivityWorkspaceView(db_manager=db_manager)
     view_settings = SettingsWorkspaceView(
         db_manager=db_manager,
         license_client=license_client,
     )
 
+    # Thay thế các placeholder widget ban đầu bằng view thật để giữ đúng index (0..5) và Composer ở cuối
+    main_window.stacked_widget.removeWidget(main_window.view_dashboard)
+    main_window.stacked_widget.removeWidget(main_window.view_pages)
+    main_window.stacked_widget.removeWidget(main_window.view_video)
+    main_window.stacked_widget.removeWidget(main_window.view_schedule)
+    main_window.stacked_widget.removeWidget(main_window.view_comments)
+    main_window.stacked_widget.removeWidget(main_window.view_settings)
+
+    main_window.stacked_widget.insertWidget(0, view_overview)
+    main_window.stacked_widget.insertWidget(1, view_pages)
+    main_window.stacked_widget.insertWidget(2, view_video)
+    main_window.stacked_widget.insertWidget(3, view_schedule)
+    main_window.stacked_widget.insertWidget(4, view_comments)
+    main_window.stacked_widget.insertWidget(5, view_settings)
+
+    main_window.stacked_widget.addWidget(view_activity)
+    view_bulk_placeholder = QWidget()
+    main_window.stacked_widget.addWidget(view_bulk_placeholder)
+    main_window.stacked_widget.addWidget(view_composer)
+
+    # Đăng ký 10 Routes vào NavigationController
+    nav = main_window.nav_controller
+    sb = main_window.sidebar
+
+    nav.register_route(Route.DASHBOARD, view_overview, sb.get_button(Route.DASHBOARD))
+    nav.register_route(Route.PAGES, view_pages, sb.get_button(Route.PAGES))
+    nav.register_route(Route.SCHEDULE, view_schedule, sb.get_button(Route.SCHEDULE))
+    nav.register_route(Route.MEDIA, view_video, sb.get_button(Route.MEDIA))
+    nav.register_route(Route.DOWNLOADS, view_video, sb.get_button(Route.DOWNLOADS))
+    nav.register_route(Route.BULK_IMPORT, view_bulk_placeholder, sb.get_button(Route.BULK_IMPORT))
+    nav.register_route(Route.COMMENTS, view_comments, sb.get_button(Route.COMMENTS))
+    nav.register_route(Route.ACTIVITY, view_activity, sb.get_button(Route.ACTIVITY))
+    nav.register_route(Route.SETTINGS, view_settings, sb.get_button(Route.SETTINGS))
+    nav.register_route(Route.COMPOSER, view_composer, sb.get_button(Route.COMPOSER))
+
     # Cập nhật danh sách Page vào Header combobox
     def refresh_header_page_selector():
-        main_window.page_selector.clear()
-        main_window.page_selector.addItem("Tất cả các Page")
-        for p in page_repo.list_pages():
-            main_window.page_selector.addItem(f"{p['name']} ({p['facebook_page_id']})", p["id"])
+        pages = page_repo.list_pages()
+        main_window.top_bar.populate_pages(pages)
 
     refresh_header_page_selector()
     view_pages.page_list_changed.connect(refresh_header_page_selector)
@@ -216,22 +258,24 @@ def create_application() -> MainWindow:
         dlg.import_completed.connect(view_overview.reload_dashboard_data)
         dlg.exec()
 
+    # Nhấn Route BULK_IMPORT từ sidebar thì mở popup Bulk Import
+    sb.get_button(Route.BULK_IMPORT).clicked.connect(open_bulk_import_popup)
+
     # Nối tín hiệu từ Overview Dashboard
     view_overview.quick_post_requested.connect(open_quick_post_popup)
-    view_overview.download_video_requested.connect(lambda: (main_window.sidebar_btn_group.button(2).setChecked(True), main_window.stacked_widget.setCurrentIndex(2)))
+    view_overview.download_video_requested.connect(lambda: nav.navigate_to(Route.DOWNLOADS))
     view_overview.add_page_requested.connect(lambda: (ConnectPageDialog(fb_client, page_repo, main_window).exec(), view_pages.reload_pages()))
     view_overview.bulk_import_requested.connect(open_bulk_import_popup)
     view_pages.bulk_import_requested.connect(open_bulk_import_popup)
 
     # Nối tín hiệu nút Tạo bài nhanh ở Header
-    main_window.btn_quick_create.clicked.disconnect()
-    main_window.btn_quick_create.clicked.connect(open_quick_post_popup)
+    main_window.top_bar.quick_create_clicked.disconnect()
+    main_window.top_bar.quick_create_clicked.connect(open_quick_post_popup)
 
-    # Luồng 1-click: Nhận tín hiệu từ Video Workspace -> Chuyển trực tiếp sang Post Composer (BR-06)
+    # Luồng 1-click: Nhận tín hiệu từ Video Workspace -> Chuyển trực tiếp sang Post Composer (BR-06, A-02)
     def on_video_sent_to_composer(data: dict) -> None:
         view_composer.attach_video_data(data)
-        # Chuyển sang màn hình Soạn bài
-        main_window.stacked_widget.setCurrentWidget(view_composer)
+        nav.navigate_to(Route.COMPOSER)
 
     view_video.send_to_composer.connect(on_video_sent_to_composer)
     view_video.tab_download.media_downloaded.connect(view_overview.reload_dashboard_data)
@@ -240,24 +284,8 @@ def create_application() -> MainWindow:
     view_composer.publish_enqueued.connect(lambda _: view_schedule.reload_schedules())
     view_composer.publish_enqueued.connect(lambda _: view_overview.reload_dashboard_data())
 
-    # Thay thế các placeholder widget trong stacked_widget
-    main_window.stacked_widget.removeWidget(main_window.view_dashboard)
-    main_window.stacked_widget.removeWidget(main_window.view_pages)
-    main_window.stacked_widget.removeWidget(main_window.view_video)
-    main_window.stacked_widget.removeWidget(main_window.view_schedule)
-    main_window.stacked_widget.removeWidget(main_window.view_settings)
-
-    main_window.stacked_widget.insertWidget(0, view_overview)
-    main_window.stacked_widget.insertWidget(1, view_pages)
-    main_window.stacked_widget.insertWidget(2, view_video)
-    main_window.stacked_widget.insertWidget(3, view_schedule)
-    main_window.stacked_widget.insertWidget(5, view_settings)
-
-    # Thêm ComposerView vào vị trí riêng (để chuyển khi cần)
-    main_window.stacked_widget.addWidget(view_composer)
-
     # Mặc định mở ở Dashboard (Tổng quan)
-    main_window.stacked_widget.setCurrentIndex(0)
+    nav.navigate_to(Route.DASHBOARD)
 
     # Tín hiệu khay hệ thống
     tray_manager.open_requested.connect(main_window.show)

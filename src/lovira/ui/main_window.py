@@ -1,11 +1,11 @@
 """
 Lovira-Facebook Manager
-Cửa sổ Chính Desktop Shell (MainWindow)
-- PySide6 Desktop GUI hoàn chỉnh, không dùng Web UI hay Electron (BR-02)
-- Sidebar 6 mục: Tổng quan, Page & nội dung, Video, Lịch đăng, Bình luận, Cài đặt (Section 4.1)
-- Header thanh điều hướng, ô tìm kiếm nhanh, nút Tạo bài nhanh, Badge trạng thái License
-- Thanh trạng thái phía dưới: Số việc đang chạy, trạng thái kết nối, nút Nhật ký
-- Xử lý đóng cửa sổ: thu nhỏ xuống khay hệ thống khi bật chạy nền (AC-08, AC-09)
+Cửa sổ Chính Desktop Shell 2.0 (MainWindow)
+Tích hợp kiến trúc Shell phân tầng chuẩn mực:
+- AppSidebar: 10 Route phân nhóm rõ ràng kèm vector icons (Section 2.3)
+- TopCommandBar: Tìm kiếm nhanh (Ctrl+K), Global Page Selector, Tạo bài (Ctrl+N), License Badge
+- NavigationController: Điều phối 10 Route ổn định, xóa bỏ lỗi lệch index (A-02)
+- Hỗ trợ đầy đủ phím tắt bàn phím & xử lý chạy nền qua khay hệ thống (AC-08, AC-09)
 """
 
 import logging
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QButtonGroup,
 )
+
 from src.lovira.ui.theme import THEME_DARK
 from src.lovira.ui.tray import SystemTrayManager
 from src.lovira.ui.license_dialog import LicenseDialog
@@ -34,11 +35,16 @@ from src.lovira.licensing.client import LicenseClient
 from src.lovira.licensing.policy import AccessPolicyManager
 from src.lovira.storage.db import DatabaseManager
 
+from src.lovira.ui.shell.navigation import Route, NavigationController, NAVIGATION_ROUTES
+from src.lovira.ui.shell.sidebar import AppSidebar
+from src.lovira.ui.shell.top_bar import TopCommandBar
+from src.lovira.ui.shell.global_context import GlobalPageContext
+
 logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
-    """Cửa sổ ứng dụng desktop chính của Lovira-Facebook Manager."""
+    """Cửa sổ ứng dụng desktop chính của Lovira Workspace 2.0."""
 
     def __init__(
         self,
@@ -53,12 +59,13 @@ class MainWindow(QMainWindow):
         self.license_client = license_client
         self.policy_manager = policy_manager
         self.tray_manager = tray_manager
+        self.context = GlobalPageContext.get_instance()
 
         self.setWindowTitle("Lovira-Facebook Manager")
-        self.resize(1200, 780)
+        self.resize(1260, 800)
         self.setMinimumSize(960, 640)
 
-        # Áp dụng Dark Theme
+        # Áp dụng stylesheet chuẩn hóa từ Theme Engine
         self.setStyleSheet(THEME_DARK)
 
         self._init_ui()
@@ -71,106 +78,34 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # 1. Sidebar bên trái (6 mục)
-        self.sidebar_frame = QFrame()
-        self.sidebar_frame.setObjectName("sidebarFrame")
-        self.sidebar_frame.setFixedWidth(220)
-        sidebar_layout = QVBoxLayout(self.sidebar_frame)
-        sidebar_layout.setContentsMargins(8, 16, 8, 16)
-        sidebar_layout.setSpacing(6)
+        # 1. Sidebar điều hướng 10 Route
+        self.sidebar = AppSidebar(self)
+        self.sidebar_frame = self.sidebar  # Tương thích ngược
+        main_layout.addWidget(self.sidebar)
 
-        # Logo / Tiêu đề
-        logo_label = QLabel("LOVIRA MANAGER")
-        logo_label.setObjectName("logoLabel")
-        sidebar_layout.addWidget(logo_label)
-
-        sidebar_layout.addSpacing(12)
-
-        # Danh sách 6 nút Sidebar
-        self.sidebar_btn_group = QButtonGroup(self)
-        self.sidebar_btn_group.setExclusive(True)
-
-        self.sidebar_buttons = []
-        nav_items = [
-            ("📊  Tổng quan", 0),
-            ("📑  Page và Nội dung", 1),
-            ("🎬  Video", 2),
-            ("📅  Lịch đăng", 3),
-            ("💬  Bình luận", 4),
-            ("⚙️  Cài đặt", 5),
-        ]
-
-        for text, index in nav_items:
-            btn = QPushButton(text)
-            btn.setObjectName("sidebarButton")
-            btn.setCheckable(True)
-            if index == 0:
-                btn.setChecked(True)
-            self.sidebar_btn_group.addButton(btn, index)
-            sidebar_layout.addWidget(btn)
-            self.sidebar_buttons.append(btn)
-
-        self.sidebar_btn_group.idClicked.connect(self._on_nav_clicked)
-
-        sidebar_layout.addStretch()
-
-        # Nút thu gọn sidebar
-        self.btn_toggle_sidebar = QPushButton("◀ Thu gọn")
-        self.btn_toggle_sidebar.setObjectName("sidebarButton")
-        self.btn_toggle_sidebar.clicked.connect(self._toggle_sidebar)
-        sidebar_layout.addWidget(self.btn_toggle_sidebar)
-
-        main_layout.addWidget(self.sidebar_frame)
-
-        # 2. Vùng nội dung bên phải (Header + Stacked Widget + Status Bar)
+        # 2. Vùng nội dung trung tâm (TopCommandBar + StackedWidget + StatusBar)
         content_container = QWidget()
         content_layout = QVBoxLayout(content_container)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
 
-        # Top Header
-        self.header_frame = QFrame()
-        self.header_frame.setObjectName("headerFrame")
-        header_layout = QHBoxLayout(self.header_frame)
-        header_layout.setContentsMargins(20, 10, 20, 10)
-        header_layout.setSpacing(14)
+        # Top Command Bar (Header)
+        self.top_bar = TopCommandBar(self)
+        self.header_frame = self.top_bar  # Tương thích ngược
+        content_layout.addWidget(self.top_bar)
 
-        # Ô tìm kiếm nhanh
-        self.search_input = QLineEdit()
-        self.search_input.setObjectName("searchInput")
-        self.search_input.setPlaceholderText("🔍 Tìm nhanh bài viết, video, fanpage...")
-        self.search_input.setFixedWidth(280)
-        header_layout.addWidget(self.search_input)
+        # Alias tương thích ngược cho header widgets
+        self.search_input = self.top_bar.search_input
+        self.page_selector = self.top_bar.page_selector
+        self.btn_quick_create = self.top_bar.btn_quick_create
+        self.btn_license_badge = self.top_bar.btn_license_badge
 
-        # Bộ chọn Page
-        lbl_page = QLabel("Fanpage:")
-        lbl_page.setStyleSheet("font-weight: 600; color: #94A3B8; font-size: 13px;")
-        header_layout.addWidget(lbl_page)
-        self.page_selector = QComboBox()
-        self.page_selector.setObjectName("pageSelector")
-        self.page_selector.addItem("Tất cả các Page")
-        self.page_selector.setMinimumWidth(220)
-        header_layout.addWidget(self.page_selector)
-
-        header_layout.addStretch()
-
-        # Nút Tạo bài nhanh
-        self.btn_quick_create = QPushButton("➕ Tạo bài nhanh")
-        self.btn_quick_create.setObjectName("primaryButton")
-        self.btn_quick_create.clicked.connect(self._open_quick_create)
-        header_layout.addWidget(self.btn_quick_create)
-
-        # Badge License
-        self.btn_license_badge = QPushButton("🔑 Bản quyền")
-        self.btn_license_badge.clicked.connect(self._open_license_dialog)
-        header_layout.addWidget(self.btn_license_badge)
-
-        content_layout.addWidget(self.header_frame)
-
-        # Stacked Widget chứa các màn hình làm việc
+        # Stacked Widget chứa các workspace
         self.stacked_widget = QStackedWidget()
+        content_layout.addWidget(self.stacked_widget)
+        main_layout.addWidget(content_container)
 
-        # Tạo 6 placeholder widget ban đầu (sẽ được tích hợp các view chuyên biệt)
+        # 6 placeholder widgets tương thích ngược ban đầu
         self.view_dashboard = QWidget()
         self.view_pages = QWidget()
         self.view_video = QWidget()
@@ -188,70 +123,79 @@ class MainWindow(QMainWindow):
         ]:
             self.stacked_widget.addWidget(w)
 
-        content_layout.addWidget(self.stacked_widget)
-        main_layout.addWidget(content_container)
+        # 6 nút tương thích ngược cho test cũ F-20
+        self.sidebar_buttons = [
+            self.sidebar.get_button(Route.DASHBOARD),
+            self.sidebar.get_button(Route.PAGES),
+            self.sidebar.get_button(Route.DOWNLOADS),
+            self.sidebar.get_button(Route.SCHEDULE),
+            self.sidebar.get_button(Route.COMMENTS),
+            self.sidebar.get_button(Route.SETTINGS),
+        ]
 
-        # Status Bar dưới cùng
+        # Tạo alias tương thích ngược cho button group sidebar
+        self.sidebar_btn_group = self.sidebar._button_group
+        for idx, btn in enumerate(self.sidebar_buttons):
+            if btn:
+                self.sidebar_btn_group.setId(btn, idx)
+
+        def _on_btn_id_clicked(btn_id: int):
+            if btn_id < self.stacked_widget.count():
+                self.stacked_widget.setCurrentIndex(btn_id)
+
+        self.sidebar_btn_group.idClicked.connect(_on_btn_id_clicked)
+
+        # Navigation Controller
+        self.nav_controller = NavigationController(self.stacked_widget)
+        self.sidebar.route_requested.connect(self.nav_controller.navigate_to)
+        self.nav_controller.route_changed.connect(self._on_route_changed)
+
+        # Nối nút Tạo bài trên TopBar với Route Soạn bài (hoặc Quick Post popup)
+        self.top_bar.quick_create_clicked.connect(self._on_quick_create_clicked)
+        self.top_bar.license_badge_clicked.connect(self._open_license_dialog)
+
+        # 3. Thanh trạng thái phía dưới (Status Bar)
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
 
         self.lbl_status_conn = QLabel("🟢 Sẵn sàng")
         self.lbl_status_jobs = QLabel("📦 Công việc đang chạy: 0")
-        self.lbl_status_tray = QLabel("🛡️ Chạy nền: Bật")
+        self.lbl_status_tray = QLabel("🛡️ Chạy nền: Bật" if self.tray_manager else "🛡️ Chạy nền: Tắt")
 
         self.status_bar.addWidget(self.lbl_status_conn)
         self.status_bar.addPermanentWidget(self.lbl_status_jobs)
         self.status_bar.addPermanentWidget(self.lbl_status_tray)
 
-    def _on_nav_clicked(self, index: int) -> None:
-        self.stacked_widget.setCurrentIndex(index)
-
     def _toggle_sidebar(self) -> None:
-        if self.sidebar_frame.width() > 80:
-            self.sidebar_frame.setFixedWidth(64)
-            self.btn_toggle_sidebar.setText("▶")
-            for btn in self.sidebar_buttons:
-                # Ẩn bớt text, chỉ giữ icon
-                parts = btn.text().split("  ")
-                if len(parts) > 1:
-                    btn.setToolTip(parts[1])
-                    btn.setText(parts[0])
-        else:
-            self.sidebar_frame.setFixedWidth(220)
-            self.btn_toggle_sidebar.setText("◀ Thu gọn")
-            nav_texts = [
-                "📊  Tổng quan",
-                "📑  Page và Nội dung",
-                "🎬  Video",
-                "📅  Lịch đăng",
-                "💬  Bình luận",
-                "⚙️  Cài đặt",
-            ]
-            for btn, text in zip(self.sidebar_buttons, nav_texts):
-                btn.setText(text)
+        """Alias tương thích ngược."""
+        self.sidebar.toggle_collapse()
+
+    def _on_route_changed(self, route_val: str) -> None:
+        """Cập nhật tiêu đề trên TopCommandBar khi chuyển Route."""
+        route = Route(route_val)
+        for item in NAVIGATION_ROUTES:
+            if item.route == route:
+                self.top_bar.set_screen_title(item.title)
+                break
+        self.sidebar.set_active_route(route)
+
+    def _on_quick_create_clicked(self) -> None:
+        """Mở trình soạn thảo bài viết mới."""
+        self.nav_controller.navigate_to(Route.COMPOSER)
 
     def _update_license_badge(self) -> None:
-        if not self.policy_manager.config.license_required:
-            self.btn_license_badge.setText("🎁 Chế độ Miễn phí")
-            self.btn_license_badge.setObjectName("badgeReady")
-        elif self.license_client.is_active:
-            self.btn_license_badge.setText("✅ Bản quyền Active")
-            self.btn_license_badge.setObjectName("badgeReady")
-        else:
-            self.btn_license_badge.setText("⚠️ Chưa kích hoạt Key")
-            self.btn_license_badge.setObjectName("badgeWarning")
-        self.btn_license_badge.style().unpolish(self.btn_license_badge)
-        self.btn_license_badge.style().polish(self.btn_license_badge)
+        is_free = not self.policy_manager.config.license_required
+        is_active = self.license_client.is_active
+        self.top_bar.update_license_display(is_active=is_active, is_free=is_free)
 
     def _open_license_dialog(self) -> None:
         dialog = LicenseDialog(self.license_client, self)
         dialog.license_activated.connect(lambda _: self._update_license_badge())
         dialog.exec()
 
-    def _open_quick_create(self) -> None:
-        # Chuyển sang màn hình Video (tab Soạn bài)
-        self.sidebar_btn_group.button(2).setChecked(True)
-        self.stacked_widget.setCurrentIndex(2)
+    def navigate_to_route(self, route: Route) -> bool:
+        """Hàm công khai cho phép điều hướng từ bất cứ đâu."""
+        return self.nav_controller.navigate_to(route)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """
@@ -263,7 +207,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             self.hide()
             self.tray_manager.show_notification(
-                "Lovira-Facebook Manager",
+                "Lovira Workspace 2.0",
                 "Ứng dụng đang tiếp tục chạy nền để xử lý lịch đăng tự động.",
             )
         else:
