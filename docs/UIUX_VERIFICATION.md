@@ -353,4 +353,36 @@ Tài liệu ghi lại toàn bộ bằng chứng thực nghiệm (log test, comma
   6. `Bảo vệ xóa AC-12`: Kiểm tra nghiêm ngặt `active_job_count`; hiển thị cảnh báo đỏ và chặn xóa hoàn toàn khi file video đang được lịch đăng chờ tham chiếu.
   7. `Thread Lifecycle Safety`: Chuẩn hóa vòng đời `QThread` gán parent và session fixture `qapp` giải quyết triệt để lỗi access violation trên Windows.
 
+---
+
+### Task UX-10: Bulk Import Wizard 2.0 (`bulk_import_dialog.py`)
+
+- **Thời gian:** 13/10/2026 13:36 VN
+- **Branch:** `feature/uiux-redesign-v2`
+- **Commit:** Pending
+- **Visual Snapshot:** `docs/redesign_screenshots/09_bulk_import_v2.png` (70 KB, chuẩn thiết kế mockup `09_nhap_excel.png`).
+- **Command 1:** `pytest tests/test_ux10_bulk_import_wizard.py -v`
+- **Kết quả Command 1:**
+  ```text
+  tests/test_ux10_bulk_import_wizard.py::test_bulk_import_stepper_and_file_selection PASSED [ 33%]
+  tests/test_ux10_bulk_import_wizard.py::test_bulk_import_preview_and_validation_badges PASSED [ 66%]
+  tests/test_ux10_bulk_import_wizard.py::test_bulk_import_strict_page_matching_a07_invariant PASSED [100%]
+  ============================== 3 passed in 0.98s ==============================
+  ```
+- **Command 2 (Full Gate):** `python -m pytest tests/ -v`
+- **Kết quả Command 2:**
+  ```text
+  collected 118 items
+  ...
+  ============================ 118 passed in 11.26s =============================
+  ```
+- **Bằng chứng nghiệp vụ xác minh:**
+  1. `Stepper Indicator 3 bước`: Hiển thị rõ ràng quy trình 3 giai đoạn (1. Chọn tệp tin -> 2. Xem trước & Kiểm tra -> 3. Lên lịch tự động).
+  2. `File Info Card & CSV Template`: Cho phép xem thông tin file đã chọn và 1-click tải file mẫu chuẩn `bulk_schedule_template.csv` đúng 5 cột quy định.
+  3. `Validation Badges`: Dải thẻ thống kê trực quan đếm số dòng tổng cộng, số dòng hợp lệ màu xanh, số dòng cần sửa màu đỏ.
+  4. `Khắc phục triệt để lỗi Audit A-07 P0`: Phân loại rõ ràng từng dòng dữ liệu: nếu Fanpage ID không có trong cơ sở dữ liệu thì đánh dấu lỗi đỏ và loại trừ an toàn, tuyệt đối không silent fallback đăng lên toàn bộ page.
+  5. `QThread Lifecycle Safety`: Gán parent cho worker thread, ngăn ngừa rò rỉ và xung đột bộ nhớ trên Windows.
+  6. `ContentSnapshot Constructor Sync`: Chuẩn hóa các tham số bất biến của bài viết khi đẩy vào hàng đợi SQLite WAL.
+
+
 

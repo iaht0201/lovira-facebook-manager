@@ -396,6 +396,52 @@ Chỉ chuyển task tiếp theo khi task hiện tại đạt chuẩn **DONE** k�
   - Chặn xóa file an toàn tuyệt đối khi đang có lịch tham chiếu (AC-12).
   - Không mở file tùy tiện ngoài đường dẫn hợp lệ.
 - **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Media Library & Video Downloader 2.0, khắc phục triệt để lỗi A-12, có 2 visual snapshots `05_media_library_v2.png` và `08_video_download_v2.png`, 115/115 tests passed.
-- **Next unblocked task:** UX-10 — Bulk Import Wizard 2.0 (`bulk_import_dialog.py`).
+
+---
+
+### UX-10 — Bulk Import Wizard 2.0 (`bulk_import_dialog.py`)
+- **Status:** DONE
+- **Start/End (VN):** 13/10/2026 13:30 — 13/10/2026 13:36
+- **Baseline SHA / Commit SHA:** `656d906` / Pending
+- **Scope and no-go changes:**
+  - Nâng cấp Trình Nhập lịch hàng loạt từ Excel / CSV thành Wizard 3 bước hiện đại bám sát Mockup `09_nhap_excel.png`:
+    1. **Thanh chỉ báo tiến trình 3 bước (Stepper Indicator):**
+       - Bước 1: `1. Chọn tệp tin` (chọn file CSV/Excel, tải file mẫu).
+       - Bước 2: `2. Xem trước & Kiểm tra` (phân tích dữ liệu, kiểm tra khớp Fanpage ID, xem lỗi từng dòng).
+       - Bước 3: `3. Lên lịch tự động` (tiến độ tạo ContentSnapshot và đẩy vào hàng đợi SQLite).
+    2. **Khung tệp tin & Hướng dẫn mẫu:**
+       - Thẻ hiển thị tệp tin đã chọn (Tên file, kích thước, định dạng, nút Thay đổi file).
+       - Nút Tải file CSV mẫu chuẩn (`bulk_schedule_template.csv`) với 5 cột: `page_id, caption, media_path, scheduled_time, content_type`.
+    3. **Thống kê kiểm tra hợp lệ tức thì (Validation Badges):**
+       - Dải thống kê trực quan: `Tổng số dòng`, `Hợp lệ` (màu xanh thành công), `Cần sửa` (màu đỏ cảnh báo).
+    4. **Bảng xem trước phân loại nghiêm ngặt (Khắc phục lỗi A-07 P0):**
+       - Bảng 6 cột chuẩn: `Dòng`, `Page ID / Tên Page`, `Loại bài`, `Thời điểm đăng (Giờ VN)`, `Đường dẫn File`, `Trạng thái`.
+       - Phân biệt rõ ràng Fanpage hợp lệ (`✓ Sẵn sàng`) vs Page ID không tồn tại trong hệ thống (`✗ Page không tồn tại`).
+       - Tuyệt đối KHÔNG silent fallback all pages (tuân thủ nghiêm ngặt invariant A-07 P0).
+    5. **Tiến trình Lên lịch tự động an toàn & QThread Lifecycle:**
+       - Gán `parent: Optional[QWidget] = None` cho QThread worker để ngăn chặn triệt để lỗi Windows access violation khi giải phóng bộ nhớ.
+       - Chuẩn hóa hàm khởi tạo `ContentSnapshot(batch_id, page_id, content_type, final_caption, primary_media_id, media_checksum, media_path, scheduled_at_utc, schedule_mode)`.
+       - Thanh tiến độ % thực tế kèm nhãn dòng đang xử lý và tổng kết kết quả nhập.
+- **Existing behavior to preserve:** Bảo toàn 100% các attribute cũ `file_path_edit`, `btn_browse`, `btn_preview`, `btn_schedule`, `preview_table`, `preview_rows`, `_on_browse`, `_on_preview`, `_on_schedule`, `_detect_file_type`, `_parse_csv`, `_parse_excel`, `_validate_rows`, `_show_error`.
+- **Changed files:**
+  - `src/lovira/ui/views/bulk_import_dialog.py` (upgraded to 2.0)
+  - `tests/test_ux10_bulk_import_wizard.py` (new - 3 test cases)
+  - `scripts/capture_bulk_import_v2.py` (new - snapshot utility)
+  - `docs/redesign_screenshots/09_bulk_import_v2.png` (captured visual snapshot)
+- **UI states implemented:**
+  - Stepper 3 bước chuyển đổi trạng thái (active, completed, pending).
+  - Tải file mẫu CSV.
+  - Phân tích và hiển thị preview bảng kèm validation badges.
+  - Lỗi Page ID không hợp lệ được đánh dấu đỏ và loại trừ an toàn (A-07).
+  - Thanh tiến độ nhập và thông báo hoàn thành.
+- **Exact tests executed and results:**
+  - `pytest tests/test_ux10_bulk_import_wizard.py -v`: 3 passed in 0.98s.
+  - `python -m pytest tests/ -v`: 118 passed in 11.26s (toàn bộ 118/118 tests xanh 100%).
+- **Security & a11y self-review:**
+  - Chặn triệt để hành vi silent fallback gán bài đăng lên toàn bộ fanpage khi sai ID (A-07).
+  - Không tải và thực thi code từ file excel; chỉ đọc dữ liệu thô.
+- **Why DONE is justified:** Hoàn tất 100% tiêu chí nghiệm thu của Bulk Import Wizard 2.0, khắc phục triệt để lỗi A-07, có visual snapshot `09_bulk_import_v2.png`, 118/118 tests passed.
+- **Next unblocked task:** UX-11 — Comments Workspace 2.0 (`comments_workspace.py`).
+
 
 

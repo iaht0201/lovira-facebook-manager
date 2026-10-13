@@ -1,13 +1,17 @@
 """
-Lovira-Facebook Manager
-Hộp thoại Nhập Lịch đăng Hàng loạt từ File Sheet Mẫu Excel / CSV (BulkImportDialog)
-- Xuất file sheet mẫu (.xlsx / .csv) chuẩn hóa (Tiêu đề, Caption, Link video/File, Page IDs, Giờ VN, Loại đăng)
-- Nhập dữ liệu tự động: Hỗ trợ link video TikTok/Douyin (tự tải video nền) hoặc file video trên máy
-- Lên lịch hàng loạt nguyên tử vào PublishQueueRepository theo giờ Việt Nam (UTC+7)
+Lovira Workspace 2.0 — Bulk Import Wizard (bulk_import_dialog.py)
+Hộp thoại Nhập Lịch đăng Hàng loạt từ File Sheet Mẫu Excel / CSV 2.0 (Mockup 09_nhap_hang_loat.png):
+- Stepper 3 bước trực quan: (1) Chọn file -> (2) Xem trước & Kiểm tra -> (3) Lên lịch
+- Card thông tin tệp: Hiển thị tên file, số lượng dòng, dung lượng và nút tải sheet mẫu
+- Thống kê kiểm tra dữ liệu: Badge Hợp lệ, Cần sửa, Tổng cộng
+- Nghiêm cấm tuyệt đối silent fallback all pages (Khắc phục A-07 P0)
+- Bảng xem trước tích hợp trạng thái dòng (Hợp lệ vs Cần sửa Page ID)
+- Xử lý tải video nền và lên lịch hàng loạt theo giờ Việt Nam (UTC+7)
 """
 
 import os
 import csv
+import uuid
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
@@ -34,8 +38,10 @@ from src.lovira.storage.queue_repository import PublishQueueRepository
 from src.lovira.storage.media_repository import MediaRepository
 from src.lovira.integrations.downloaders.video_downloader import VideoDownloader
 from src.lovira.media.processor import MediaProcessor
-from src.lovira.domain.composer import ContentSnapshot
+from src.lovira.domain.composer import ContentSnapshot, ScheduleMode, ContentType
 from src.lovira.domain.timezone import vn_now, vn_datetime_to_utc_iso, create_vn_datetime
+from src.lovira.ui.design.icons import get_icon
+from src.lovira.ui.widgets.status_chip import StatusChip
 
 
 class BulkImportWorker(QThread):
@@ -88,99 +94,76 @@ class BulkImportWorker(QThread):
                 raw_page_tokens = [p.strip() for p in page_ids_str.split(",") if p.strip()]
 
                 if any(p.upper() in ["ALL", "TAT_CA", "TẤT_CẢ", "TATCA", "*"] for p in raw_page_tokens):
-                    # Chỉ đăng lên tất cả Page khi người dùng chỉ định tường minh từ khóa ALL/TAT_CA
                     target_internal_page_ids = list(all_internal_ids)
                 elif raw_page_tokens:
                     for fb_pid in raw_page_tokens:
                         if fb_pid in page_id_map:
                             target_internal_page_ids.append(page_id_map[fb_pid])
                 else:
-                    # Page_IDs rỗng: Tuyệt đối không fallback sang all_internal_ids
                     pass
 
                 if not target_internal_page_ids:
-                    # Hàng không có Page ID hợp lệ -> bỏ qua an toàn, không tạo job rác
                     continue
 
-                # 2. Xử lý video (từ link hoặc từ file local)
+                # 2. Xử lý video nguồn (file local hoặc link online)
                 local_video_path = None
                 media_id = None
 
-                if video_src.startswith("http://") or video_src.startswith("https://"):
-                    # Tải video từ link TikTok/Douyin/Bilibili
-                    self.progress_updated.emit(idx, total, f"Đang tải video dòng {idx}/{total} từ link...")
-                    try:
-                        saved_path = self.downloader.download(video_src, self.download_dir)
-                        local_video_path = str(saved_path)
-                        probe = self.media_processor.inspect_video(Path(saved_path))
-                        checksum = self.media_processor.calculate_sha256(Path(saved_path))
-                        media_id = self.media_repo.add_media_asset(
-                            local_path=Path(saved_path),
-                            checksum=checksum,
-                            size_bytes=os.path.getsize(saved_path) if os.path.exists(saved_path) else 0,
-                            duration=probe.duration if probe else 0.0,
-                            source_platform="online_link",
-                            source_url=video_src,
-                            width=probe.width if probe else 0,
-                            height=probe.height if probe else 0,
-                        )
-                    except Exception as dl_err:
-                        # Ghi nhận lỗi nhưng không dừng toàn bộ tiến trình
-                        continue
-                elif video_src and os.path.exists(video_src):
-                    local_video_path = video_src
-                    probe = self.media_processor.inspect_video(Path(video_src))
-                    checksum = self.media_processor.calculate_sha256(Path(video_src))
-                    media_id = self.media_repo.add_media_asset(
-                        local_path=Path(video_src),
-                        checksum=checksum,
-                        size_bytes=os.path.getsize(video_src),
-                        duration=probe.duration if probe else 0.0,
-                        source_platform="local_file",
-                        source_url=video_src,
-                        width=probe.width if probe else 0,
-                        height=probe.height if probe else 0,
-                    )
+                if video_src:
+                    if os.path.exists(video_src):
+                        local_video_path = video_src
+                    elif video_src.startswith("http://") or video_src.startswith("https://"):
+                        self.progress_updated.emit(idx, total, f"Đang tải video dòng {idx}/{total}...")
+                        try:
+                            saved_path = self.downloader.download(
+                                url=video_src,
+                                output_dir=self.download_dir,
+                            )
+                            local_video_path = str(saved_path)
+                        except Exception:
+                            continue
 
-                # 3. Phân tích thời gian hẹn giờ
-                sched_utc = None
-                sched_mode = "instant"
-                if time_str:
+                if local_video_path and os.path.exists(local_video_path):
                     try:
-                        # Hỗ trợ định dạng: YYYY-MM-DD HH:MM hoặc DD/MM/YYYY HH:MM
-                        dt_vn = None
-                        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M"):
-                            try:
-                                dt_vn = datetime.strptime(time_str, fmt)
-                                break
-                            except ValueError:
-                                pass
-                        if dt_vn:
-                            dt_vn_tz = create_vn_datetime(dt_vn.year, dt_vn.month, dt_vn.day, dt_vn.hour, dt_vn.minute, dt_vn.second)
-                            if dt_vn_tz > vn_now():
-                                sched_utc = vn_datetime_to_utc_iso(dt_vn_tz)
-                                sched_mode = "scheduled_local"
+                        checksum = self.media_processor.calculate_sha256(Path(local_video_path))
+                        probe = self.media_processor.inspect_video(Path(local_video_path))
+                        media_id = self.media_repo.add_media_asset(
+                            local_path=Path(local_video_path),
+                            checksum=checksum,
+                            size_bytes=os.path.getsize(local_video_path),
+                            duration=probe.duration if probe else 0.0,
+                            source_platform="bulk_import",
+                            source_url=video_src if video_src.startswith("http") else "",
+                        )
                     except Exception:
                         pass
 
-                # 4. Tạo ContentSnapshot & Enqueue
-                import uuid
-                batch_id = f"batch_{uuid.uuid4().hex[:10]}"
-                now_utc = vn_datetime_to_utc_iso(vn_now())
-                target_sched_utc = sched_utc if sched_utc else now_utc
+                # 3. Phân tích giờ đăng VN -> UTC ISO
+                target_sched_utc = None
+                if time_str:
+                    try:
+                        dt_vn = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+                        dt_vn_tz = create_vn_datetime(
+                            dt_vn.year, dt_vn.month, dt_vn.day, dt_vn.hour, dt_vn.minute
+                        )
+                        target_sched_utc = vn_datetime_to_utc_iso(dt_vn_tz)
+                    except Exception:
+                        pass
 
-                from src.lovira.domain.composer import ContentType, ScheduleMode
-
+                # 4. Tạo ContentSnapshot và enqueue batch
+                final_caption = f"{title}\n\n{caption}".strip() if title else caption
+                import_batch_id = f"batch_imp_{uuid.uuid4().hex[:8]}"
+                ctype = ContentType.REELS if post_type == "reels" else ContentType.VIDEO if post_type == "video" else ContentType.TEXT
                 snapshots = []
-                for pid in target_internal_page_ids:
+                for p_id in target_internal_page_ids:
                     snap = ContentSnapshot(
-                        batch_id=batch_id,
-                        page_id=pid,
-                        content_type=ContentType.REELS if local_video_path else ContentType.TEXT,
-                        final_caption=caption,
+                        batch_id=import_batch_id,
+                        page_id=p_id,
+                        content_type=ctype,
+                        final_caption=final_caption,
                         primary_media_id=media_id,
                         media_path=local_video_path,
-                        scheduled_at_utc=target_sched_utc,
+                        scheduled_at_utc=target_sched_utc or "",
                         schedule_mode=ScheduleMode.LOCAL,
                     )
                     snapshots.append(snap)
@@ -198,7 +181,7 @@ class BulkImportWorker(QThread):
 
 
 class BulkImportDialog(QDialog):
-    """Hộp thoại Nhập Lịch đăng từ Sheet mẫu Excel / CSV."""
+    """Hộp thoại Nhập Lịch đăng từ Sheet mẫu Excel / CSV 2.0."""
 
     import_completed = Signal()
 
@@ -222,72 +205,130 @@ class BulkImportDialog(QDialog):
 
         self.loaded_rows: List[Dict[str, str]] = []
         self.worker: Optional[BulkImportWorker] = None
+        self._current_file_path: Optional[str] = None
 
-        self.setWindowTitle("Nhập Lịch đăng Hàng loạt từ Sheet Excel / CSV")
-        self.resize(920, 620)
+        self.setWindowTitle("Nhập Lịch đăng Hàng loạt từ Sheet Excel / CSV 2.0")
+        self.resize(1000, 680)
         self._init_ui()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(24, 20, 24, 24)
         layout.setSpacing(14)
 
-        # Header toolbar
+        # 1. Stepper 3 bước trực quan
+        stepper_frame = QFrame()
+        stepper_frame.setObjectName("cardFrame")
+        stepper_layout = QHBoxLayout(stepper_frame)
+        stepper_layout.setContentsMargins(16, 10, 16, 10)
+        stepper_layout.setSpacing(16)
+
+        self.step1_lbl = QLabel("1. Chọn file")
+        self.step1_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #6258E8;")
+        self.step2_lbl = QLabel("➔  2. Xem trước & Kiểm tra")
+        self.step2_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #38BDF8;")
+        self.step3_lbl = QLabel("➔  3. Lên lịch hàng loạt")
+        self.step3_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #94A3B8;")
+
+        stepper_layout.addWidget(self.step1_lbl)
+        stepper_layout.addWidget(self.step2_lbl)
+        stepper_layout.addWidget(self.step3_lbl)
+        stepper_layout.addStretch()
+        layout.addWidget(stepper_frame)
+
+        # 2. Header & File Action Card
         top_frame = QFrame()
         top_frame.setObjectName("cardFrame")
         top_layout = QHBoxLayout(top_frame)
+        top_layout.setContentsMargins(16, 12, 16, 12)
+        top_layout.setSpacing(12)
 
         title_box = QVBoxLayout()
-        lbl_title = QLabel("NHẬP NỘI DUNG VÀ LÊN LỊCH HÀNG LOẠT")
-        lbl_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #818CF8;")
-        lbl_desc = QLabel("Cho phép import file Excel/CSV chứa tiêu đề, caption, link video TikTok/Douyin và giờ đăng VN.")
-        lbl_desc.setStyleSheet("color: #94A3B8; font-size: 12px;")
-        title_box.addWidget(lbl_title)
-        title_box.addWidget(lbl_desc)
+        title_box.setSpacing(4)
+        self.lbl_file_title = QLabel("NHẬP NỘI DUNG VÀ LÊN LỊCH TỪ BẢNG TÍNH")
+        self.lbl_file_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #F3F6FC;")
+        self.lbl_file_sub = QLabel("Hỗ trợ định dạng .xlsx và .csv — Tự động kiểm tra tính hợp lệ của từng dòng")
+        self.lbl_file_sub.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        title_box.addWidget(self.lbl_file_title)
+        title_box.addWidget(self.lbl_file_sub)
         top_layout.addLayout(title_box)
 
         top_layout.addStretch()
 
         btn_template = QPushButton("📄 Tải Sheet mẫu Excel (.xlsx)")
+        btn_template.setIcon(get_icon("download", "#A9B8CF", 14))
         btn_template.clicked.connect(self._export_template)
         top_layout.addWidget(btn_template)
 
-        btn_load_file = QPushButton("📂 Chọn file để Nhập")
-        btn_load_file.setObjectName("primaryButton")
-        btn_load_file.clicked.connect(self._select_file_to_import)
-        top_layout.addWidget(btn_load_file)
+        self.btn_load_file = QPushButton("📂 Chọn file để Nhập")
+        self.btn_load_file.setObjectName("primaryButton")
+        self.btn_load_file.setIcon(get_icon("plus", "#FFFFFF", 16))
+        self.btn_load_file.clicked.connect(self._select_file_to_import)
+        top_layout.addWidget(self.btn_load_file)
 
         layout.addWidget(top_frame)
 
-        # Bảng xem trước dữ liệu (Preview Table)
+        # 3. Thanh thống kê Badges (Hợp lệ / Cần sửa / Tổng cộng)
+        badge_row = QHBoxLayout()
+        badge_row.setSpacing(12)
+
+        self.lbl_valid_badge = QLabel("✅ Hợp lệ: 0 dòng")
+        self.lbl_valid_badge.setStyleSheet("font-size: 12px; font-weight: 700; color: #24C89A;")
+        self.lbl_invalid_badge = QLabel("⚠️ Cần sửa Page ID: 0 dòng")
+        self.lbl_invalid_badge.setStyleSheet("font-size: 12px; font-weight: 700; color: #F0707B;")
+        self.lbl_total_badge = QLabel("📊 Tổng cộng: 0 dòng")
+        self.lbl_total_badge.setStyleSheet("font-size: 12px; font-weight: 700; color: #94A3B8;")
+
+        badge_row.addWidget(self.lbl_valid_badge)
+        badge_row.addWidget(self.lbl_invalid_badge)
+        badge_row.addWidget(self.lbl_total_badge)
+        badge_row.addStretch()
+
+        self.lbl_safety_notice = QLabel("🔒 Nghiêm cấm tự động đăng lên toàn bộ Fanpage khi thiếu Page ID")
+        self.lbl_safety_notice.setStyleSheet("font-size: 11px; color: #F59E0B; font-style: italic;")
+        badge_row.addWidget(self.lbl_safety_notice)
+
+        layout.addLayout(badge_row)
+
+        # 4. Bảng xem trước dữ liệu (Preview Table)
         self.table_preview = QTableWidget()
         self.table_preview.setColumnCount(6)
         self.table_preview.setHorizontalHeaderLabels([
-            "Tiêu đề", "Nội dung / Caption", "Video (Link hoặc File)", "Page IDs đích", "Giờ Đăng VN", "Loại"
+            "STT", "Tiêu đề & Nội dung", "Video (Link hoặc File)", "Page IDs đích", "Giờ Đăng VN", "Kiểm tra"
         ])
+        self.table_preview.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table_preview.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table_preview.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table_preview.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_preview.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_preview.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.table_preview.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_preview.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table_preview.verticalHeader().setDefaultSectionSize(40)
         layout.addWidget(self.table_preview)
 
-        # Thanh tiến độ xử lý
+        # 5. Thanh tiến độ xử lý
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setFixedHeight(8)
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
-        self.lbl_status = QLabel("Sẵn sàng nhập file.")
+        self.lbl_status = QLabel("Vui lòng nhấn 'Chọn file để Nhập' để bắt đầu quy trình.")
         self.lbl_status.setStyleSheet("color: #94A3B8; font-size: 12px;")
         layout.addWidget(self.lbl_status)
 
-        # Nút hành động dưới cùng
+        # 6. Nút hành động dưới cùng
         bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(12)
+
         self.btn_cancel = QPushButton("Đóng")
         self.btn_cancel.clicked.connect(self.reject)
 
-        self.btn_start_import = QPushButton("🚀 Bắt đầu Xử lý & Lên lịch hàng loạt")
+        self.btn_start_import = QPushButton("🚀 Bắt đầu Lên lịch hàng loạt")
         self.btn_start_import.setObjectName("successButton")
+        self.btn_start_import.setIcon(get_icon("composer", "#FFFFFF", 16))
         self.btn_start_import.setEnabled(False)
         self.btn_start_import.clicked.connect(self._start_import_process)
 
@@ -348,43 +389,44 @@ class BulkImportDialog(QDialog):
                 f"Đã tạo file mẫu thành công tại:\n{file_path}\n\nBạn có thể mở file này ra chỉnh sửa rồi bấm 'Chọn file để Nhập'!",
             )
         except Exception as e:
-            QMessageBox.critical(self, "Lỗi xuất file", f"Không thể xuất file mẫu:\n{e}")
+            QMessageBox.critical(self, "Lỗi xuất file", f"Không thể lưu file mẫu:\n{e}")
 
     def _select_file_to_import(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Chọn file Excel hoặc CSV", "", "Spreadsheets (*.xlsx *.xls *.csv)"
+            self, "Chọn file Sheet Excel hoặc CSV", "", "Spreadsheets (*.xlsx *.csv)"
         )
-        if not file_path:
-            return
+        if file_path:
+            self._load_data_from_file(file_path)
 
+    def _load_data_from_file(self, file_path: str) -> None:
+        self._current_file_path = file_path
         self.loaded_rows.clear()
         try:
-            if file_path.endswith(".csv"):
-                with open(file_path, "r", encoding="utf-8-sig") as f:
-                    reader = csv.DictReader(f)
-                    for r in reader:
-                        self.loaded_rows.append(r)
-            else:
+            if file_path.endswith(".xlsx"):
                 import pandas as pd
                 df = pd.read_excel(file_path)
-                # Chuyển nan thành chuỗi rỗng
                 df = df.fillna("")
-                self.loaded_rows = df.to_dict(orient="records")
+                self.loaded_rows = df.astype(str).to_dict(orient="records")
+            else:
+                with open(file_path, "r", encoding="utf-8-sig") as f:
+                    reader = csv.DictReader(f)
+                    self.loaded_rows = [dict(row) for row in reader]
 
-            if not self.loaded_rows:
-                QMessageBox.warning(self, "File rỗng", "Không tìm thấy dòng dữ liệu nào trong file.")
-                return
-
-            # Hiển thị lên bảng preview (kèm kiểm tra hợp lệ Page ID - UX-01)
             all_pages = self.page_repo.list_pages()
             known_fb_ids = {p["facebook_page_id"] for p in all_pages}
+
             valid_count = 0
             invalid_count = 0
 
             self.table_preview.setRowCount(len(self.loaded_rows))
             for row_idx, r in enumerate(self.loaded_rows):
-                self.table_preview.setItem(row_idx, 0, QTableWidgetItem(str(r.get("TieuDe", ""))))
-                self.table_preview.setItem(row_idx, 1, QTableWidgetItem(str(r.get("NoiDung_Caption", ""))))
+                self.table_preview.setItem(row_idx, 0, QTableWidgetItem(str(row_idx + 1)))
+
+                title = str(r.get("TieuDe", "")).strip()
+                caption = str(r.get("NoiDung_Caption", "")).strip()
+                display_content = f"{title} — {caption[:40]}" if title else caption[:50]
+                self.table_preview.setItem(row_idx, 1, QTableWidgetItem(display_content))
+
                 self.table_preview.setItem(row_idx, 2, QTableWidgetItem(str(r.get("Video_Link_Hoac_File", ""))))
 
                 raw_page_ids = str(r.get("Page_IDs", "")).strip()
@@ -396,26 +438,40 @@ class BulkImportDialog(QDialog):
                 if is_all:
                     page_item.setText("Tất cả Page (ALL)")
                     valid_count += 1
+                    status_item = QTableWidgetItem("Hợp lệ")
                 elif matched:
                     valid_count += 1
+                    status_item = QTableWidgetItem("Hợp lệ")
                 else:
                     invalid_count += 1
                     if not raw_page_ids:
                         page_item.setText("⚠️ Thiếu Page ID")
                     else:
-                        page_item.setText(f"⚠️ {raw_page_ids} (Không tìm thấy)")
+                        page_item.setText(f"⚠️ {raw_page_ids}")
+                    status_item = QTableWidgetItem("⚠️ Cần sửa Page ID")
 
                 self.table_preview.setItem(row_idx, 3, page_item)
                 self.table_preview.setItem(row_idx, 4, QTableWidgetItem(str(r.get("NgayGioDang_VN", ""))))
-                self.table_preview.setItem(row_idx, 5, QTableWidgetItem(str(r.get("LoaiDang", "reels"))))
+                self.table_preview.setItem(row_idx, 5, status_item)
+
+            total_count = len(self.loaded_rows)
+            self.lbl_valid_badge.setText(f"✅ Hợp lệ: {valid_count} dòng")
+            self.lbl_invalid_badge.setText(f"⚠️ Cần sửa Page ID: {invalid_count} dòng")
+            self.lbl_total_badge.setText(f"📊 Tổng cộng: {total_count} dòng")
+
+            file_name = Path(file_path).name
+            self.lbl_file_title.setText(f"TỆP ĐANG XEM TRƯỚC: {file_name}")
+            self.lbl_file_sub.setText(f"Đường dẫn: {file_path} ({total_count} dòng)")
 
             self.btn_start_import.setEnabled(valid_count > 0)
+            self.btn_start_import.setText(f"🚀 Bắt đầu Lên lịch {valid_count} bài viết hợp lệ")
+
             if invalid_count > 0:
                 self.lbl_status.setText(
-                    f"Đã nạp {len(self.loaded_rows)} dòng ({valid_count} hợp lệ, {invalid_count} dòng thiếu/sai Page ID sẽ bị bỏ qua an toàn)."
+                    f"Đã nạp {total_count} dòng: {valid_count} hợp lệ, {invalid_count} dòng thiếu/sai Page ID sẽ bị bỏ qua an toàn."
                 )
             else:
-                self.lbl_status.setText(f"Đã nạp {len(self.loaded_rows)} bài viết hợp lệ. Nhấn nút bên dưới để tiến hành lên lịch!")
+                self.lbl_status.setText(f"Tất cả {total_count} dòng đều hợp lệ! Nhấn nút bên dưới để tiến hành lên lịch.")
         except Exception as e:
             QMessageBox.critical(self, "Lỗi đọc file", f"Không thể đọc file:\n{e}")
 
@@ -424,9 +480,13 @@ class BulkImportDialog(QDialog):
             return
 
         self.btn_start_import.setEnabled(False)
+        self.btn_load_file.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.lbl_status.setText("Đang khởi động tiến trình import...")
+
+        self.step2_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #94A3B8;")
+        self.step3_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #24C89A;")
 
         self.worker = BulkImportWorker(
             rows=self.loaded_rows,
@@ -452,6 +512,7 @@ class BulkImportDialog(QDialog):
         self.progress_bar.setValue(100)
         self.lbl_status.setText(f"✅ Hoàn thành: Đã nhập {success_count}/{total} bài viết vào hàng đợi.")
         self.btn_start_import.setEnabled(True)
+        self.btn_load_file.setEnabled(True)
         QMessageBox.information(
             self,
             "Nhập thành công",
@@ -465,6 +526,7 @@ class BulkImportDialog(QDialog):
 
     def _on_error(self, err_msg: str) -> None:
         self.btn_start_import.setEnabled(True)
+        self.btn_load_file.setEnabled(True)
         self.lbl_status.setText(f"❌ Lỗi: {err_msg}")
         QMessageBox.critical(self, "Lỗi trong tiến trình import", f"Có lỗi xảy ra:\n{err_msg}")
 
@@ -473,8 +535,9 @@ class BulkImportDialog(QDialog):
         if self.worker:
             try:
                 if self.worker.isRunning():
+                    self.worker.requestInterruption()
                     self.worker.quit()
-                    self.worker.wait(3000)
-            except RuntimeError:
+                    self.worker.wait(1000)
+            except (RuntimeError, Exception):
                 pass
         super().closeEvent(event)
