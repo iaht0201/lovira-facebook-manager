@@ -15,7 +15,7 @@ Native PySide6 | Dashboard nhỏ gọn, hiện đại.
 import json
 from typing import Optional, Dict, Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QEvent, QTimer
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -417,6 +417,8 @@ class OverviewWorkspaceView(QWidget):
         layout.setSpacing(12)
 
         self.scroll_area.setWidget(canvas)
+        if self.scroll_area.viewport():
+            self.scroll_area.viewport().installEventFilter(self)
 
         # ----------------------------------------------
         # 1. COMPACT HEADER
@@ -651,18 +653,38 @@ class OverviewWorkspaceView(QWidget):
         super().showEvent(event)
         if hasattr(self, "scroll_area") and self.scroll_area.verticalScrollBar():
             self.scroll_area.verticalScrollBar().setValue(0)
+        # Kích hoạt reflow ngay sau khi widget được render trên màn hình
+        QTimer.singleShot(0, lambda: self._reflow_cards(force=True))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-
         if hasattr(self, "_cards"):
             self._reflow_cards()
 
+    def eventFilter(self, watched, event):
+        if (
+            hasattr(self, "scroll_area")
+            and watched == self.scroll_area.viewport()
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._reflow_cards()
+        return super().eventFilter(watched, event)
+
     def _reflow_cards(self, force: bool = False) -> None:
-        if hasattr(self, "scroll_area"):
+        width = 0
+        if hasattr(self, "scroll_area") and self.scroll_area.viewport():
             width = self.scroll_area.viewport().width()
-        else:
+        if width <= 0:
             width = self.width()
+
+        # Khi mới khởi tạo trong bộ nhớ hoặc chưa layout thực tế,
+        # viewport().width() thường <= 100. Cần ước tính từ cửa sổ cha hoặc fallback hợp lý.
+        if width < 300:
+            win = self.window()
+            if win and win.width() > 300:
+                width = win.width() - 250
+            else:
+                width = 800
 
         if width >= 1050:
             columns = 4

@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap, QIcon
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -31,6 +32,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QDialog,
     QStackedLayout,
+    QFileDialog,
+    QProgressBar,
 )
 
 from src.lovira.ui.design.icons import get_icon
@@ -40,24 +43,244 @@ from src.lovira.ui.shell.global_context import GlobalPageContext
 from src.lovira.ui.widgets.empty_state import EmptyState
 from src.lovira.ui.widgets.status_chip import StatusChip
 from src.lovira.domain.timezone import format_vn_display
+from src.lovira.services.link_preview import LinkPreviewService, AsyncLinkPreviewWorker
 
 logger = logging.getLogger(__name__)
 
 
+class ImportTemplatesDialog(QDialog):
+    """Hộp thoại nhập hàng loạt mẫu câu & sản phẩm Shopee."""
+
+    templates_imported = Signal(int)
+
+    def __init__(self, reply_repo: ReplyTemplateRepository, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.reply_repo = reply_repo
+        self.setWindowTitle("📥 Nhập danh sách Mẫu câu & Sản phẩm Shopee")
+        self.setMinimumSize(560, 460)
+        self._init_ui()
+
+    def _init_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        lbl_guide = QLabel(
+            "<b>Hướng dẫn nhập danh sách mẫu câu / sản phẩm:</b><br>"
+            "• <b>Cách 1:</b> Dán danh sách link Shopee hoặc nội dung vào khung bên dưới.<br>"
+            "&nbsp;&nbsp;Ví dụ: <code>https://s.shopee.vn/8A9B1C</code> (Tự động cào tên, giá & ảnh SP)<br>"
+            "&nbsp;&nbsp;Hoặc: <code>Tên sản phẩm | Link Shopee / Nội dung bình luận</code><br>"
+            "• <b>Cách 2:</b> Bấm <b>'Chọn file...'</b> để nhập từ file TXT, CSV hoặc JSON."
+        )
+        lbl_guide.setStyleSheet("color: #94A3B8; font-size: 12px; background: #131D2E; padding: 12px; border-radius: 6px; border: 1px solid #1E2D47;")
+        lbl_guide.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(lbl_guide)
+
+        self.txt_input = QTextEdit()
+        self.txt_input.setPlaceholderText(
+            "Dán danh sách tại đây, mỗi dòng một mẫu câu/sản phẩm:\n\n"
+            "https://s.shopee.vn/8A9B1C\n"
+            "Áo thun polo nam | https://shopee.vn/product/123/456\n"
+            "Tư vấn size | Dạ shop chào bạn, bạn nhắn tin để shop tư vấn nhé!\n"
+            "Giảm giá 50k | Nhập mã LOVIRA50K khi đặt hàng Shopee nè cả nhà!"
+        )
+        self.txt_input.setStyleSheet("""
+            QTextEdit {
+                background-color: #0F172A;
+                border: 1px solid #24344D;
+                border-radius: 6px;
+                padding: 10px;
+                color: #F8FAFC;
+                font-size: 13px;
+                font-family: Consolas, monospace;
+            }
+        """)
+        layout.addWidget(self.txt_input, stretch=1)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #1E2D47;
+                border-radius: 4px;
+                text-align: center;
+                background-color: #131D2E;
+                color: #F1F5F9;
+                font-size: 11px;
+                height: 18px;
+            }
+            QProgressBar::chunk {
+                background-color: #6258E8;
+            }
+        """)
+        layout.addWidget(self.progress_bar)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self.btn_file = QPushButton("📁 Chọn file (TXT, CSV, JSON)...")
+        self.btn_file.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                border: 1px solid #334155;
+                color: #E2E8F0;
+                padding: 6px 14px;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #334155;
+            }
+        """)
+        self.btn_file.clicked.connect(self._on_choose_file)
+        btn_row.addWidget(self.btn_file)
+
+        btn_row.addStretch()
+
+        self.btn_cancel = QPushButton("Hủy")
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(self.btn_cancel)
+
+        self.btn_import = QPushButton("📥 Tiến hành Nhập dữ liệu")
+        self.btn_import.setStyleSheet("""
+            QPushButton {
+                background-color: #6258E8;
+                color: #FFFFFF;
+                font-weight: 700;
+                padding: 6px 18px;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #5348D6;
+            }
+        """)
+        self.btn_import.clicked.connect(self._handle_import)
+        btn_row.addWidget(self.btn_import)
+
+        layout.addLayout(btn_row)
+
+    def _on_choose_file(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Chọn file danh sách mẫu câu",
+            "",
+            "Tất cả định dạng hỗ trợ (*.txt *.csv *.json);;Text Files (*.txt);;CSV Files (*.csv);;JSON Files (*.json)",
+        )
+        if not file_path:
+            return
+
+        try:
+            p = Path(file_path)
+            content = p.read_text(encoding="utf-8", errors="ignore")
+            if p.suffix.lower() == ".json":
+                data = json.loads(content)
+                lines = []
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict):
+                            name = item.get("name") or ""
+                            val = item.get("content") or item.get("product_url") or ""
+                            lines.append(f"{name} | {val}" if name else val)
+                        elif isinstance(item, str):
+                            lines.append(item)
+                self.txt_input.setPlainText("\n".join(lines))
+            else:
+                self.txt_input.setPlainText(content)
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi đọc file", f"Không thể đọc file đã chọn:\n{e}")
+
+    def _handle_import(self) -> None:
+        text = self.txt_input.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "Trống", "Vui lòng nhập hoặc dán nội dung cần nhập.")
+            return
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return
+
+        self.btn_import.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setMaximum(len(lines))
+        self.progress_bar.setValue(0)
+
+        preview_srv = LinkPreviewService.get_instance()
+        items_to_save = []
+
+        for idx, line in enumerate(lines, 1):
+            name = ""
+            content = line
+            product_url = ""
+
+            if "|" in line:
+                parts = line.split("|", 1)
+                name = parts[0].strip()
+                content = parts[1].strip()
+
+            urls = preview_srv.extract_urls(content)
+            image_url = ""
+            local_image_path = ""
+            price = ""
+
+            if urls:
+                product_url = urls[0]
+                prev = preview_srv.fetch_preview(product_url, timeout=3.5)
+                if prev.get("success"):
+                    if not name and prev.get("title"):
+                        name = prev["title"]
+                    image_url = prev.get("image_url", "")
+                    local_image_path = prev.get("local_image_path", "")
+                    price = prev.get("price", "")
+
+            if not name:
+                name = f"Mẫu #{idx} " + (content[:25] + "..." if len(content) > 25 else content)
+
+            items_to_save.append({
+                "name": name,
+                "content": content,
+                "product_url": product_url,
+                "image_url": image_url,
+                "local_image_path": local_image_path,
+                "price": price,
+            })
+
+            self.progress_bar.setValue(idx)
+
+        imported = self.reply_repo.import_templates(items_to_save)
+        self.templates_imported.emit(imported)
+        QMessageBox.information(
+            self,
+            "Nhập thành công",
+            f"✅ Đã nhập thành công {imported} mẫu câu & sản phẩm vào thư viện!",
+        )
+        self.accept()
+
+
 class TemplateManagerDialog(QDialog):
-    """Hộp thoại Quản lý Mẫu câu phản hồi nhanh (Reply Templates)."""
+    """Hộp thoại Quản lý Mẫu câu phản hồi nhanh & Sản phẩm Shopee."""
+
+    template_selected = Signal(dict)
 
     def __init__(
         self,
         reply_repo: ReplyTemplateRepository,
         current_page_id: Optional[str] = None,
+        is_picker: bool = False,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
         self.reply_repo = reply_repo
         self.current_page_id = current_page_id
-        self.setWindowTitle("Quản lý Mẫu câu Phản hồi Nhanh")
-        self.setMinimumSize(540, 420)
+        self.is_picker = is_picker
+        self.selected_template: Optional[Dict[str, Any]] = None
+
+        self._active_worker: Optional[AsyncLinkPreviewWorker] = None
+        self._current_preview_data: Dict[str, Any] = {}
+
+        title = "🛍 Chọn Mẫu câu & Sản phẩm bình luận" if is_picker else "Quản lý Mẫu câu Phản hồi Nhanh & Sản phẩm Shopee"
+        self.setWindowTitle(title)
+        self.setMinimumSize(780, 560)
         self._init_ui()
         self._load_templates()
 
@@ -66,46 +289,185 @@ class TemplateManagerDialog(QDialog):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
-        lbl_desc = QLabel("Tạo và chỉnh sửa các mẫu câu trả lời thường dùng để phản hồi khách hàng trong tích tắc.")
+        lbl_desc = QLabel(
+            "Tạo, quản lý và lưu trữ các mẫu câu bình luận, link sản phẩm Shopee để tự động đính kèm khi đăng bài Reels/Video."
+        )
         lbl_desc.setStyleSheet("color: #94A3B8; font-size: 12px;")
         lbl_desc.setWordWrap(True)
         layout.addWidget(lbl_desc)
 
-        # Bảng danh sách mẫu câu
+        # 1. Bảng danh sách mẫu câu (4 cột: Ảnh, Tên/Sản phẩm, Giá, Nội dung/Link)
         self.table = QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Tên mẫu câu", "Nội dung phản hồi"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Ảnh SP", "Tên mẫu / Sản phẩm", "Giá", "Nội dung phản hồi / Link Shopee"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 56)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(1, 220)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(2, 90)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        layout.addWidget(self.table)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setDefaultSectionSize(46)
+        self.table.itemDoubleClicked.connect(self._on_table_double_clicked)
+        layout.addWidget(self.table, stretch=1)
 
-        # Form thêm mẫu câu mới
+        # 2. Form thêm mẫu câu / sản phẩm mới
         add_frame = QFrame()
-        add_frame.setStyleSheet("background: #1E293B; border-radius: 8px; padding: 10px;")
+        add_frame.setStyleSheet("background: #141E33; border: 1px solid #22334F; border-radius: 8px; padding: 12px;")
         add_layout = QVBoxLayout(add_frame)
         add_layout.setSpacing(8)
 
-        add_layout.addWidget(QLabel("Thêm mẫu câu mới:"))
+        lbl_add_title = QLabel("➕ Thêm mẫu câu / Sản phẩm Shopee mới:")
+        lbl_add_title.setStyleSheet("font-weight: 700; color: #F1F5F9; font-size: 13px;")
+        add_layout.addWidget(lbl_add_title)
+
+        # Dòng 1: Link sản phẩm Shopee & nút quét
+        row_url = QHBoxLayout()
+        row_url.setSpacing(8)
+        self.txt_url = QLineEdit()
+        self.txt_url.setPlaceholderText("🛍 Dán link sản phẩm Shopee (https://s.shopee.vn/... hoặc shopee.vn) để tự động quét ảnh & tên SP...")
+        self.txt_url.setStyleSheet("""
+            QLineEdit {
+                background: #0B111E;
+                border: 1px solid #2A3C59;
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: #F8FAFC;
+                font-size: 12px;
+            }
+        """)
+        self.txt_url.textChanged.connect(self._on_url_changed)
+        row_url.addWidget(self.txt_url, stretch=1)
+
+        self.btn_scan = QPushButton("🔍 Dò tìm SP")
+        self.btn_scan.setStyleSheet("""
+            QPushButton {
+                background: #1E2D47;
+                color: #CBD5E1;
+                border: 1px solid #33476B;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #283C60;
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_scan.clicked.connect(self._scan_product_url)
+        row_url.addWidget(self.btn_scan)
+        add_layout.addLayout(row_url)
+
+        # Card xem trước mini khi quét link thành công
+        self.preview_card = QFrame()
+        self.preview_card.setStyleSheet("background: #0D1627; border: 1px solid #3B4E75; border-radius: 6px; padding: 6px;")
+        self.preview_card.setVisible(False)
+        pv_layout = QHBoxLayout(self.preview_card)
+        pv_layout.setContentsMargins(6, 4, 6, 4)
+        pv_layout.setSpacing(10)
+
+        self.lbl_pv_thumb = QLabel()
+        self.lbl_pv_thumb.setFixedSize(40, 40)
+        self.lbl_pv_thumb.setStyleSheet("background: #1E293B; border-radius: 4px;")
+        pv_layout.addWidget(self.lbl_pv_thumb)
+
+        pv_text_box = QVBoxLayout()
+        pv_text_box.setSpacing(2)
+        self.lbl_pv_title = QLabel()
+        self.lbl_pv_title.setStyleSheet("font-weight: 700; color: #F1F5F9; font-size: 12px;")
+        self.lbl_pv_price = QLabel()
+        self.lbl_pv_price.setStyleSheet("color: #34D399; font-size: 11px; font-weight: 600;")
+        pv_text_box.addWidget(self.lbl_pv_title)
+        pv_text_box.addWidget(self.lbl_pv_price)
+        pv_layout.addLayout(pv_text_box, stretch=1)
+
+        add_layout.addWidget(self.preview_card)
+
+        # Dòng 2: Tên mẫu gợi nhớ
         self.txt_name = QLineEdit()
-        self.txt_name.setPlaceholderText("Tên gợi nhớ (VD: Chào hỏi, Báo giá, Cảm ơn...)")
+        self.txt_name.setPlaceholderText("Tên gợi nhớ (VD: Áo polo nam, Đồ ăn cho cún, Chào hỏi...)")
+        self.txt_name.setStyleSheet(self.txt_url.styleSheet())
         add_layout.addWidget(self.txt_name)
 
+        # Dòng 3: Nội dung phản hồi / bình luận
         self.txt_content = QTextEdit()
-        self.txt_content.setPlaceholderText("Nội dung phản hồi gửi tới khách hàng...")
-        self.txt_content.setMaximumHeight(70)
+        self.txt_content.setPlaceholderText("Nội dung bình luận tự động đăng lên bài viết (kèm link Shopee nếu có)...")
+        self.txt_content.setMaximumHeight(65)
+        self.txt_content.setStyleSheet("""
+            QTextEdit {
+                background: #0B111E;
+                border: 1px solid #2A3C59;
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: #F8FAFC;
+                font-size: 12px;
+            }
+        """)
         add_layout.addWidget(self.txt_content)
 
+        # Các nút thao tác thêm / xóa / import
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton(" Thêm mẫu câu")
+        btn_row.setSpacing(10)
+
+        self.btn_add = QPushButton(" Thêm vào thư viện")
         self.btn_add.setObjectName("primaryButton")
         self.btn_add.setIcon(get_icon("composer", "#FFFFFF", 14))
+        self.btn_add.setStyleSheet("""
+            QPushButton {
+                background: #6258E8;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 700;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background: #5348D6;
+            }
+        """)
         self.btn_add.clicked.connect(self._handle_add)
         btn_row.addWidget(self.btn_add)
+
+        self.btn_import = QPushButton(" 📥 Nhập danh sách...")
+        self.btn_import.setStyleSheet("""
+            QPushButton {
+                background: #17243B;
+                border: 1px solid #2B3D59;
+                color: #E2E8F0;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #22334F;
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_import.clicked.connect(self._open_import_dialog)
+        btn_row.addWidget(self.btn_import)
 
         self.btn_delete = QPushButton(" Xóa mẫu đã chọn")
         self.btn_delete.setObjectName("dangerButton")
         self.btn_delete.setIcon(get_icon("trash", "#FFFFFF", 14))
+        self.btn_delete.setStyleSheet("""
+            QPushButton {
+                background: #7F1D1D;
+                color: #FCA5A5;
+                border: 1px solid #991B1B;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background: #991B1B;
+                color: #FFFFFF;
+            }
+        """)
         self.btn_delete.clicked.connect(self._handle_delete)
         btn_row.addWidget(self.btn_delete)
 
@@ -113,13 +475,93 @@ class TemplateManagerDialog(QDialog):
         add_layout.addLayout(btn_row)
         layout.addWidget(add_frame)
 
-        # Nút đóng
+        # 3. Footer Buttons
         bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(10)
+
+        if self.is_picker:
+            self.btn_use = QPushButton("✓ Sử dụng mẫu này cho bài viết")
+            self.btn_use.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6258E8, stop:1 #4F46E5);
+                    color: #FFFFFF;
+                    font-weight: 700;
+                    padding: 8px 18px;
+                    border-radius: 6px;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background: #5348D6;
+                }
+            """)
+            self.btn_use.clicked.connect(self._handle_use_selected)
+            bottom_row.addWidget(self.btn_use)
+
         bottom_row.addStretch()
+
         btn_close = QPushButton("Đóng")
         btn_close.clicked.connect(self.accept)
         bottom_row.addWidget(btn_close)
         layout.addLayout(bottom_row)
+
+    def _on_url_changed(self, text: str) -> None:
+        clean = text.strip()
+        if clean.startswith("http://") or clean.startswith("https://"):
+            # Nếu người dùng dán link, tự động quét sau 400ms
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(400, self._scan_product_url)
+
+    def _scan_product_url(self) -> None:
+        url = self.txt_url.text().strip()
+        if not url:
+            return
+
+        self.btn_scan.setEnabled(False)
+        self.btn_scan.setText("⏳ Đang dò...")
+
+        if self._active_worker and self._active_worker.isRunning():
+            self._active_worker.terminate()
+
+        self._active_worker = AsyncLinkPreviewWorker(url, parent=self)
+        self._active_worker.preview_ready.connect(self._on_preview_ready)
+        self._active_worker.preview_failed.connect(self._on_preview_failed)
+        self._active_worker.start()
+
+    def _on_preview_ready(self, data: dict) -> None:
+        self.btn_scan.setEnabled(True)
+        self.btn_scan.setText("🔍 Dò tìm SP")
+        self._current_preview_data = data
+
+        title = data.get("title", "")
+        price = data.get("price", "")
+        local_img = data.get("local_image_path", "")
+
+        # Hiển thị card xem trước
+        self.preview_card.setVisible(True)
+        self.lbl_pv_title.setText(title or data.get("url", ""))
+        self.lbl_pv_price.setText(f"Giá: {price}" if price else "Sản phẩm Shopee")
+
+        if local_img and os.path.exists(local_img):
+            pix = QPixmap(local_img)
+            if not pix.isNull():
+                self.lbl_pv_thumb.setPixmap(
+                    pix.scaled(40, 40, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                )
+
+        # Tự động điền tên và nội dung nếu đang trống
+        if not self.txt_name.text().strip() and title:
+            self.txt_name.setText(title[:45] + "..." if len(title) > 45 else title)
+
+        if not self.txt_content.toPlainText().strip():
+            url = data.get("url", "")
+            self.txt_content.setPlainText(f"✨ Link mua sản phẩm chính hãng giá tốt nè cả nhà:\n{url}")
+
+    def _on_preview_failed(self, url: str, err: str) -> None:
+        self.btn_scan.setEnabled(True)
+        self.btn_scan.setText("🔍 Dò tìm SP")
+        # Vẫn cho phép nhập bằng tay
+        if not self.txt_content.toPlainText().strip():
+            self.txt_content.setPlainText(f"✨ Link mua sản phẩm chính hãng:\n{url}")
 
     def _load_templates(self) -> None:
         self.table.setRowCount(0)
@@ -127,39 +569,108 @@ class TemplateManagerDialog(QDialog):
         for tpl in templates:
             r = self.table.rowCount()
             self.table.insertRow(r)
+
+            # Cột 0: Thumbnail ảnh
+            item_thumb = QTableWidgetItem()
+            local_path = tpl.get("local_image_path")
+            if local_path and os.path.exists(local_path):
+                pix = QPixmap(local_path)
+                if not pix.isNull():
+                    icon = QIcon(pix.scaled(36, 36, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation))
+                    item_thumb.setIcon(icon)
+            self.table.setItem(r, 0, item_thumb)
+
+            # Cột 1: Tên mẫu
             item_name = QTableWidgetItem(tpl.get("name", ""))
-            item_name.setData(Qt.ItemDataRole.UserRole, tpl.get("id"))
-            self.table.setItem(r, 0, item_name)
-            self.table.setItem(r, 1, QTableWidgetItem(tpl.get("content", "")))
+            item_name.setData(Qt.ItemDataRole.UserRole, tpl)
+            font_b = item_name.font()
+            font_b.setBold(True)
+            item_name.setFont(font_b)
+            self.table.setItem(r, 1, item_name)
+
+            # Cột 2: Giá
+            price_text = tpl.get("price") or "—"
+            item_price = QTableWidgetItem(price_text)
+            item_price.setForeground(Qt.GlobalColor.darkGreen if price_text != "—" else Qt.GlobalColor.gray)
+            self.table.setItem(r, 2, item_price)
+
+            # Cột 3: Nội dung / Link
+            self.table.setItem(r, 3, QTableWidgetItem(tpl.get("content", "")))
 
     def _handle_add(self) -> None:
         name = self.txt_name.text().strip()
         content = self.txt_content.toPlainText().strip()
-        if not name or not content:
-            QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập đầy đủ tên và nội dung mẫu câu.")
+        url = self.txt_url.text().strip()
+
+        if not name and not content and not url:
+            QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập link sản phẩm, tên hoặc nội dung mẫu câu.")
             return
+
+        if not name:
+            name = (url or content)[:35]
+        if not content and url:
+            content = f"✨ Link mua sản phẩm chính hãng nè cả nhà:\n{url}"
 
         self.reply_repo.create_template(
             name=name,
             content=content,
             page_scope=[self.current_page_id] if self.current_page_id else None,
+            product_url=url or self._current_preview_data.get("url"),
+            image_url=self._current_preview_data.get("image_url"),
+            local_image_path=self._current_preview_data.get("local_image_path"),
+            price=self._current_preview_data.get("price"),
         )
+
+        self.txt_url.clear()
         self.txt_name.clear()
         self.txt_content.clear()
+        self.preview_card.setVisible(False)
+        self._current_preview_data = {}
         self._load_templates()
+
+    def _open_import_dialog(self) -> None:
+        dlg = ImportTemplatesDialog(self.reply_repo, parent=self)
+        dlg.templates_imported.connect(lambda _: self._load_templates())
+        dlg.exec()
 
     def _handle_delete(self) -> None:
         row = self.table.currentRow()
         if row < 0:
             QMessageBox.warning(self, "Chưa chọn", "Vui lòng chọn một mẫu câu để xóa.")
             return
-        item = self.table.item(row, 0)
+        item = self.table.item(row, 1)
         if not item:
             return
-        tpl_id = item.data(Qt.ItemDataRole.UserRole)
+        tpl_data = item.data(Qt.ItemDataRole.UserRole) or {}
+        tpl_id = tpl_data.get("id")
         if tpl_id:
-            self.reply_repo.delete_template(tpl_id)
-            self._load_templates()
+            reply = QMessageBox.question(
+                self,
+                "Xác nhận xóa",
+                f"Bạn có chắc muốn xóa mẫu '{tpl_data.get('name')}' không?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.reply_repo.delete_template(tpl_id)
+                self._load_templates()
+
+    def _on_table_double_clicked(self, item: QTableWidgetItem) -> None:
+        if self.is_picker:
+            self._handle_use_selected()
+
+    def _handle_use_selected(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "Chưa chọn", "Vui lòng chọn một mẫu câu từ danh sách.")
+            return
+        item = self.table.item(row, 1)
+        if not item:
+            return
+        tpl = item.data(Qt.ItemDataRole.UserRole)
+        if tpl:
+            self.selected_template = tpl
+            self.template_selected.emit(tpl)
+            self.accept()
 
 
 class CommentsWorkspaceView(QWidget):

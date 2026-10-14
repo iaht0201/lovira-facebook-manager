@@ -331,3 +331,153 @@ def test_download_tab_batch_schedule_and_fanpage_selection(qapp, temp_db, tmp_pa
     payload = confirm_payload[0]
     assert len(payload["fanpages"]) >= 1
     assert payload["use_original_titles"] is True
+
+
+def test_media_edit_post_dialog_save_and_quick_publish(qapp, temp_db, seed_media, tmp_path):
+    """Kiểm thử popup chỉnh sửa tiêu đề, nội dung, hashtag, bình luận và đăng nhanh."""
+    from src.lovira.ui.views.video_workspace import MediaEditPostDialog
+    from src.lovira.security.vault import SecretVault
+    from src.lovira.storage.page_repository import PageRepository
+    from src.lovira.storage.queue_repository import PublishQueueRepository
+
+    vault = SecretVault(fallback_vault_dir=tmp_path / "vault2")
+    media_repo = seed_media["media_repo"]
+    page_repo = PageRepository(temp_db, vault)
+    queue_repo = PublishQueueRepository(temp_db)
+
+    p1 = page_repo.upsert_page(
+        facebook_page_id="page_dog_fan",
+        name="Lạp Xưởng Đáng Yêu",
+        status="ready",
+    )
+    pages = page_repo.list_pages()
+
+    asset_id = seed_media["ids"][0]
+    asset = media_repo.get_media_asset(asset_id)
+
+    dlg = MediaEditPostDialog(
+        asset=asset,
+        pages=pages,
+        queue_repo=queue_repo,
+        media_repo=media_repo,
+    )
+
+    # 1. Điền chỉnh sửa tiêu đề, nội dung, hashtag, bình luận
+    dlg.txt_title.setText("Chó lạp xưởng đáng yêu nhất tiktok")
+    dlg.txt_caption.setPlainText("Video chú chó lạp xưởng siêu cưng nè cả nhà ơi!")
+    dlg.txt_hashtags.setText("#lapxuong #dachshund #viral")
+    dlg.txt_comment.setPlainText("Link mua thức ăn và đồ chơi cho cún ở bình luận này nha cả nhà: https://lovira.vn")
+
+    # Chọn Fanpage
+    idx = dlg.cb_page.findData(p1)
+    assert idx >= 0
+    dlg.cb_page.setCurrentIndex(idx)
+
+    # 2. Test Lưu thông tin vào DB
+    with patch.object(QMessageBox, "information"):
+        dlg._on_save_clicked()
+
+    # Kiểm tra DB đã cập nhật đầy đủ
+    saved = media_repo.get_media_asset(asset_id)
+    assert saved["title"] == "Chó lạp xưởng đáng yêu nhất tiktok"
+    assert saved["caption"] == "Video chú chó lạp xưởng siêu cưng nè cả nhà ơi!"
+    assert saved["hashtags"] == "#lapxuong #dachshund #viral"
+    assert saved["first_comment"] == "Link mua thức ăn và đồ chơi cho cún ở bình luận này nha cả nhà: https://lovira.vn"
+    assert saved["target_page_id"] == p1
+
+    # 3. Test Đăng nhanh ngay
+    dlg2 = MediaEditPostDialog(
+        asset=saved,
+        pages=pages,
+        queue_repo=queue_repo,
+        media_repo=media_repo,
+    )
+    published_jobs = []
+    dlg2.post_published.connect(lambda j: published_jobs.extend(j))
+
+    with patch.object(QMessageBox, "information"):
+        dlg2._on_quick_publish_clicked()
+
+    assert len(published_jobs) == 1
+    job_id = published_jobs[0]
+    job = queue_repo.get_job(job_id)
+    assert job["page_id"] == p1
+
+    from src.lovira.domain.composer import ContentSnapshot
+    snap = ContentSnapshot.from_json(job["content_snapshot"])
+    assert snap.title == "Chó lạp xưởng đáng yêu nhất tiktok"
+    assert snap.first_comment == "Link mua thức ăn và đồ chơi cho cún ở bình luận này nha cả nhà: https://lovira.vn"
+    assert "#lapxuong #dachshund #viral" in snap.final_caption
+
+
+def test_media_library_multi_select_and_batch_quick_publish(qapp, temp_db, tmp_path):
+    """Kiểm thử tính năng chọn nhiều video cùng lúc, nút Chọn tất cả/Bỏ chọn và Đăng nhanh hàng loạt."""
+    from src.lovira.storage.page_repository import PageRepository
+    from src.lovira.storage.queue_repository import PublishQueueRepository
+    from src.lovira.security.vault import SecretVault
+    from src.lovira.ui.views.video_workspace import MediaLibraryTab, ROLE_MEDIA_ID
+
+    vault = SecretVault(fallback_vault_dir=tmp_path / "vault_test")
+    media_repo = MediaRepository(temp_db)
+    page_repo = PageRepository(temp_db, vault)
+    queue_repo = PublishQueueRepository(temp_db)
+
+    # 1. Tạo 2 page và 3 video
+    p1 = page_repo.upsert_page(facebook_page_id="fb_p1", name="Page Nhất Được Nè", status="ready")
+    p2 = page_repo.upsert_page(facebook_page_id="fb_p2", name="Page Thời Trang", status="ready")
+
+    f1 = tmp_path / "vid1.mp4"
+    f2 = tmp_path / "vid2.mp4"
+    f3 = tmp_path / "vid3.mp4"
+    for f in (f1, f2, f3):
+        f.write_bytes(b"dummy")
+
+    id1 = media_repo.add_media_asset(local_path=str(f1), checksum="chk1", size_bytes=1000, duration=15.0, source_platform="tiktok")
+    id2 = media_repo.add_media_asset(local_path=str(f2), checksum="chk2", size_bytes=2000, duration=20.0, source_platform="tiktok")
+    id3 = media_repo.add_media_asset(local_path=str(f3), checksum="chk3", size_bytes=3000, duration=25.0, source_platform="tiktok")
+
+    media_repo.update_asset_full_metadata(id1, "Video 1 Cún", "Mô tả 1", "#cun1", None, target_page_id=p1)
+    media_repo.update_asset_full_metadata(id2, "Video 2 Mèo", "Mô tả 2", "#meo2", None, target_page_id=p1)
+    media_repo.update_asset_full_metadata(id3, "Video 3 Voi", "Mô tả 3", "#voi3", None, target_page_id=p1)
+
+    tab = MediaLibraryTab(media_repo=media_repo, page_repo=page_repo, queue_repo=queue_repo)
+    tab._selected_page_ids = [p1]
+
+    # 2. Test nút Chọn tất cả trên Top Toolbar
+    assert tab.selection_bar.isHidden()
+    tab.btn_select_all_top.click()
+
+    assert not tab.selection_bar.isHidden()
+    assert "Đã chọn 3 video" in tab.lbl_selected_count.text()
+    assert len(tab._get_selected_asset_ids()) == 3
+
+    # 3. Test nút Bỏ chọn trên Bottom Selection Bar
+    tab.btn_clear_selection.click()
+    assert tab.selection_bar.isHidden()
+    assert len(tab._get_selected_asset_ids()) == 0
+
+    # 4. Test chọn nhiều từng video qua _toggle_checkbox_selection
+    idx0 = tab.model.index(0, 0)
+    idx1 = tab.model.index(1, 0)
+    tab._toggle_checkbox_selection(idx0)
+    tab._toggle_checkbox_selection(idx1)
+
+    assert "Đã chọn 2 video" in tab.lbl_selected_count.text()
+    expected_selected = {tab.model.index(0, 0).data(ROLE_MEDIA_ID), tab.model.index(1, 0).data(ROLE_MEDIA_ID)}
+    assert set(tab._get_selected_asset_ids()) == expected_selected
+
+    # 5. Test Đăng nhanh hàng loạt các video đã chọn
+    with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+        with patch.object(QMessageBox, "information"):
+            with patch.object(QMessageBox, "warning"):
+                with patch.object(QMessageBox, "critical"):
+                    tab._on_quick_publish_selected()
+
+    # Kiểm tra jobs trong queue_repo
+    jobs = queue_repo.list_jobs(limit=10)
+    assert len(jobs) == 2
+    for job in jobs:
+        assert job["page_id"] == p1
+        assert job["state"] in ("queued", "scheduled_local")
+
+

@@ -24,6 +24,8 @@ class PublishResult:
     post_id: Optional[str] = None
     video_id: Optional[str] = None
     upload_id: Optional[str] = None
+    comment_id: Optional[str] = None
+    comment_error: Optional[str] = None
     error_code: Optional[str] = None
     error_message: str = ""
     is_transient: bool = False  # Có thể retry hay không (AC-21)
@@ -50,20 +52,49 @@ class GraphPublishAdapter:
         facebook_page_id: Optional[str] = None,
     ) -> PublishResult:
         """Điều phối đăng nội dung tùy theo snapshot.content_type."""
+        import time
+
         target_page_id = facebook_page_id or snapshot.page_id
         if snapshot.content_type == ContentType.TEXT:
-            return self.publish_feed(page_token, target_page_id, snapshot.final_caption)
+            res = self.publish_feed(page_token, target_page_id, snapshot.final_caption)
         elif snapshot.content_type == ContentType.PHOTO:
-            return self.publish_photo(page_token, target_page_id, snapshot.final_caption, snapshot.media_path)
+            res = self.publish_photo(page_token, target_page_id, snapshot.final_caption, snapshot.media_path)
         elif snapshot.content_type == ContentType.VIDEO:
-            return self.publish_video(page_token, target_page_id, snapshot.final_caption, snapshot.media_path)
+            res = self.publish_video(page_token, target_page_id, snapshot.final_caption, snapshot.media_path)
         elif snapshot.content_type == ContentType.REELS:
-            return self.publish_reels(page_token, target_page_id, snapshot.final_caption, snapshot.media_path)
+            res = self.publish_reels(page_token, target_page_id, snapshot.final_caption, snapshot.media_path)
         else:
             return PublishResult(
                 success=False,
                 error_message=f"Loại nội dung '{snapshot.content_type}' không được hỗ trợ.",
             )
+
+        # Tự động đăng bình luận đầu tiên (First Comment) nếu có
+        first_cmt = getattr(snapshot, "first_comment", None)
+        if res.success and first_cmt and (res.post_id or res.video_id):
+            target_obj_id = res.post_id or res.video_id
+            try:
+                # Video & Reels cần đợi 1.5s để Facebook hoàn tất mã hóa trước khi chấp nhận bình luận
+                if snapshot.content_type in (ContentType.VIDEO, ContentType.REELS):
+                    time.sleep(1.5)
+
+                c_res = self.publish_comment(page_token, target_obj_id, first_cmt)
+                if not c_res.success and facebook_page_id and not str(target_obj_id).startswith(f"{facebook_page_id}_"):
+                    # Thử lại với object id kết hợp {facebook_page_id}_{target_obj_id}
+                    time.sleep(1.0)
+                    c_res = self.publish_comment(page_token, f"{facebook_page_id}_{target_obj_id}", first_cmt)
+
+                if c_res.success:
+                    res.comment_id = c_res.post_id
+                    logger.info(f"Đã đăng bình luận đầu tiên thành công cho {target_obj_id}: {c_res.post_id}")
+                else:
+                    res.comment_error = c_res.error_message
+                    logger.warning(f"Không thể đăng bình luận đầu tiên: {c_res.error_message}")
+            except Exception as e:
+                res.comment_error = str(e)
+                logger.warning(f"Lỗi đăng bình luận đầu tiên cho bài đăng {target_obj_id}: {e}")
+
+        return res
 
     def publish_feed(self, page_token: str, page_id: str, message: str) -> PublishResult:
         """Đăng bài viết dạng văn bản lên Feed của Page."""
@@ -266,3 +297,33 @@ class GraphPublishAdapter:
                 error_message=f"Lỗi mạng khi đăng Reels: {e}",
                 is_transient=True,
             )
+
+    def publish_comment(self, page_token: str, object_id: str, message: str) -> PublishResult:
+        """Đăng bình luận (first comment) lên bài viết / video / reels."""
+        if not message or not message.strip():
+            return PublishResult(success=True)
+
+        url = self._url(f"/{object_id}/comments")
+        payload = {
+            "message": message.strip(),
+            "access_token": page_token,
+        }
+        try:
+            resp = self.session.post(url, data=payload, timeout=self.timeout)
+            data = resp.json()
+            if resp.status_code == 200 and "id" in data:
+                return PublishResult(success=True, post_id=str(data["id"]))
+            err = data.get("error", {})
+            return PublishResult(
+                success=False,
+                error_code=str(err.get("code", "COMMENT_ERR")),
+                error_message=err.get("message", "Lỗi gửi bình luận"),
+            )
+        except Exception as e:
+            return PublishResult(
+                success=False,
+                error_code="COMMENT_NET_ERR",
+                error_message=str(e),
+                is_transient=True,
+            )
+

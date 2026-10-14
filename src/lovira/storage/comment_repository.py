@@ -120,10 +120,38 @@ class CommentCacheRepository:
 
 
 class ReplyTemplateRepository:
-    """Quản lý các mẫu phản hồi bình luận (Section 6.3)."""
+    """Quản lý các mẫu phản hồi bình luận & sản phẩm Shopee (Section 6.3)."""
+
+    _instance: Optional["ReplyTemplateRepository"] = None
 
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
+        self._ensure_schema()
+        ReplyTemplateRepository._instance = self
+
+    @classmethod
+    def get_instance(cls, db_manager: Optional[DatabaseManager] = None) -> Optional["ReplyTemplateRepository"]:
+        """Lấy instance toàn cục của ReplyTemplateRepository."""
+        if cls._instance is None and db_manager is not None:
+            cls._instance = ReplyTemplateRepository(db_manager)
+        return cls._instance
+
+    def _ensure_schema(self) -> None:
+        """Đảm bảo các cột product_url, image_url, local_image_path, price tồn tại."""
+        try:
+            with self.db.transaction() as conn:
+                cursor = conn.execute("PRAGMA table_info(reply_templates);")
+                columns = {row["name"] for row in cursor.fetchall()}
+                if "product_url" not in columns:
+                    conn.execute("ALTER TABLE reply_templates ADD COLUMN product_url TEXT;")
+                if "image_url" not in columns:
+                    conn.execute("ALTER TABLE reply_templates ADD COLUMN image_url TEXT;")
+                if "local_image_path" not in columns:
+                    conn.execute("ALTER TABLE reply_templates ADD COLUMN local_image_path TEXT;")
+                if "price" not in columns:
+                    conn.execute("ALTER TABLE reply_templates ADD COLUMN price TEXT;")
+        except Exception as e:
+            logger.debug(f"Schema update for reply_templates: {e}")
 
     def create_template(
         self,
@@ -131,6 +159,10 @@ class ReplyTemplateRepository:
         content: str,
         group_id: Optional[str] = None,
         page_scope: Optional[List[str]] = None,
+        product_url: Optional[str] = None,
+        image_url: Optional[str] = None,
+        local_image_path: Optional[str] = None,
+        price: Optional[str] = None,
     ) -> str:
         template_id = f"tpl_{uuid.uuid4().hex[:12]}"
         scope_json = json.dumps(page_scope, ensure_ascii=False) if page_scope else None
@@ -138,10 +170,23 @@ class ReplyTemplateRepository:
         with self.db.transaction() as conn:
             conn.execute(
                 """
-                INSERT INTO reply_templates (id, name, content, group_id, page_scope, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, datetime('now', 'utc'), datetime('now', 'utc'));
+                INSERT INTO reply_templates (
+                    id, name, content, group_id, page_scope,
+                    product_url, image_url, local_image_path, price,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'utc'), datetime('now', 'utc'));
                 """,
-                (template_id, name, content, group_id, scope_json),
+                (
+                    template_id,
+                    name,
+                    content,
+                    group_id,
+                    scope_json,
+                    product_url,
+                    image_url,
+                    local_image_path,
+                    price,
+                ),
             )
         return template_id
 
@@ -151,12 +196,17 @@ class ReplyTemplateRepository:
         group_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         with self.db.connection_scope() as conn:
-            query = "SELECT id, name, content, group_id, page_scope, created_at, updated_at FROM reply_templates"
+            query = """
+                SELECT id, name, content, group_id, page_scope,
+                       product_url, image_url, local_image_path, price,
+                       created_at, updated_at
+                FROM reply_templates
+                ORDER BY updated_at DESC;
+            """
             cursor = conn.execute(query)
             all_templates = []
             for row in cursor.fetchall():
                 scope = json.loads(row["page_scope"]) if row["page_scope"] else None
-                # Lọc theo page_id: nếu scope là None (áp dụng tất cả) hoặc chứa page_id
                 if page_id and scope is not None and page_id not in scope:
                     continue
                 if group_id and row["group_id"] != group_id:
@@ -168,11 +218,43 @@ class ReplyTemplateRepository:
                         "content": row["content"],
                         "group_id": row["group_id"],
                         "page_scope": scope,
+                        "product_url": row["product_url"] or "",
+                        "image_url": row["image_url"] or "",
+                        "local_image_path": row["local_image_path"] or "",
+                        "price": row["price"] or "",
                         "created_at": row["created_at"],
                         "updated_at": row["updated_at"],
                     }
                 )
             return all_templates
+
+    def get_template(self, template_id: str) -> Optional[Dict[str, Any]]:
+        with self.db.connection_scope() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, name, content, group_id, page_scope,
+                       product_url, image_url, local_image_path, price,
+                       created_at, updated_at
+                FROM reply_templates WHERE id = ?;
+                """,
+                (template_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "name": row["name"],
+                "content": row["content"],
+                "group_id": row["group_id"],
+                "page_scope": json.loads(row["page_scope"]) if row["page_scope"] else None,
+                "product_url": row["product_url"] or "",
+                "image_url": row["image_url"] or "",
+                "local_image_path": row["local_image_path"] or "",
+                "price": row["price"] or "",
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
 
     def update_template(
         self,
@@ -180,6 +262,10 @@ class ReplyTemplateRepository:
         name: Optional[str] = None,
         content: Optional[str] = None,
         page_scope: Optional[List[str]] = None,
+        product_url: Optional[str] = None,
+        image_url: Optional[str] = None,
+        local_image_path: Optional[str] = None,
+        price: Optional[str] = None,
     ) -> bool:
         updates = []
         params = []
@@ -192,6 +278,18 @@ class ReplyTemplateRepository:
         if page_scope is not None:
             updates.append("page_scope = ?")
             params.append(json.dumps(page_scope, ensure_ascii=False))
+        if product_url is not None:
+            updates.append("product_url = ?")
+            params.append(product_url)
+        if image_url is not None:
+            updates.append("image_url = ?")
+            params.append(image_url)
+        if local_image_path is not None:
+            updates.append("local_image_path = ?")
+            params.append(local_image_path)
+        if price is not None:
+            updates.append("price = ?")
+            params.append(price)
 
         if not updates:
             return False
@@ -208,6 +306,30 @@ class ReplyTemplateRepository:
         with self.db.transaction() as conn:
             cursor = conn.execute("DELETE FROM reply_templates WHERE id = ?;", (template_id,))
             return cursor.rowcount > 0
+
+    def import_templates(self, items: List[Dict[str, Any]]) -> int:
+        """Nhập danh sách mẫu câu / sản phẩm hàng loạt."""
+        imported_count = 0
+        for it in items:
+            name = (it.get("name") or "").strip()
+            content = (it.get("content") or "").strip()
+            if not name and not content:
+                continue
+            if not name and content:
+                name = content[:30] + "..." if len(content) > 30 else content
+            if not content and name:
+                content = name
+
+            self.create_template(
+                name=name,
+                content=content,
+                product_url=it.get("product_url"),
+                image_url=it.get("image_url"),
+                local_image_path=it.get("local_image_path"),
+                price=it.get("price"),
+            )
+            imported_count += 1
+        return imported_count
 
 
 class FacebookCommentService:

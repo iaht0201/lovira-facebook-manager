@@ -580,6 +580,12 @@ class ScheduleWorkspaceView(QWidget):
         tools.addWidget(self.search_filter, stretch=1)
         outer.addLayout(tools)
 
+        # Timer tự động làm mới trạng thái bài đăng nền mỗi 5 giây
+        self._auto_refresh_timer = QTimer(self)
+        self._auto_refresh_timer.setInterval(5000)
+        self._auto_refresh_timer.timeout.connect(lambda: self.reload_schedules(refresh_pages=False))
+        self._auto_refresh_timer.start()
+
         tabs_row = QHBoxLayout()
         tabs_row.setSpacing(8)
         self.mode_tabs = QTabBar()
@@ -784,6 +790,14 @@ class ScheduleWorkspaceView(QWidget):
         self.btn_detail_full = self._small_button("Chi tiết", "Xem đầy đủ mã tác vụ và nội dung")
         self.btn_detail_full.clicked.connect(self._show_job_details)
         detail_actions.addWidget(self.btn_detail_full)
+        self.btn_open_facebook = self._small_button("🌐 Xem trên FB", "Mở xem bài viết / Reels trực tiếp trên Facebook")
+        self.btn_open_facebook.clicked.connect(self._open_selected_facebook_link)
+        self.btn_open_facebook.setVisible(False)
+        detail_actions.addWidget(self.btn_open_facebook)
+        self.btn_copy_link = self._small_button("📋 Copy link", "Sao chép liên kết bài đăng Facebook vào clipboard")
+        self.btn_copy_link.clicked.connect(self._copy_selected_facebook_link)
+        self.btn_copy_link.setVisible(False)
+        detail_actions.addWidget(self.btn_copy_link)
         detail_actions.addStretch(1)
         detail_layout.addLayout(detail_actions)
         detail_layout.addStretch(1)
@@ -1270,8 +1284,14 @@ class ScheduleWorkspaceView(QWidget):
             self.preview_error.setText("")
             self.btn_open_media.setEnabled(False)
             self.btn_detail_full.setEnabled(False)
+            self.btn_open_facebook.setVisible(False)
+            self.btn_copy_link.setVisible(False)
             return
         self.btn_detail_full.setEnabled(True)
+        fb_link = self._get_facebook_link_for_row(row)
+        has_fb_link = bool(fb_link)
+        self.btn_open_facebook.setVisible(has_fb_link)
+        self.btn_copy_link.setVisible(has_fb_link)
         when = row.get("_when_vn")
         color_name = STATE_LABELS.get(str(row.get("state")), str(row.get("state")))
         self.preview_page.setText(row["_page_name"])
@@ -1417,20 +1437,50 @@ class ScheduleWorkspaceView(QWidget):
                 self.day_sidebar.setVisible(not narrow)
                 self.btn_day_mobile.setVisible(narrow)
 
+    def _get_facebook_link_for_row(self, row: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not row:
+            return None
+        remote_id = row.get("remote_scheduled_id") or row.get("post_id")
+        if not remote_id:
+            return None
+        content_type = row.get("_type") or ""
+        if content_type == "reels":
+            return f"https://www.facebook.com/reel/{remote_id}"
+        return f"https://www.facebook.com/{remote_id}"
+
+    def _open_selected_facebook_link(self) -> None:
+        row = self._selected_job()
+        if not row:
+            return
+        link = self._get_facebook_link_for_row(row)
+        if link:
+            QDesktopServices.openUrl(QUrl(link))
+
+    def _copy_selected_facebook_link(self) -> None:
+        row = self._selected_job()
+        if not row:
+            return
+        link = self._get_facebook_link_for_row(row)
+        if link:
+            QApplication.clipboard().setText(link)
+            QMessageBox.information(self, "Đã sao chép", f"Đã sao chép liên kết bài đăng Facebook vào clipboard:\n{link}")
+
     def _show_job_details(self) -> None:
         row = self._selected_job()
         if row is None:
             return
         dialog = QDialog(self)
         dialog.setWindowTitle("Chi tiết lịch đăng")
-        dialog.setMinimumWidth(460)
-        dialog.resize(560, 540)
+        dialog.setMinimumWidth(500)
+        dialog.resize(580, 580)
         layout = QVBoxLayout(dialog)
         preview = MediaPreview(row, 165)
         layout.addWidget(preview)
         layout.setSpacing(9)
         when = row.get("_when_vn")
-        for key, val in (
+        fb_link = self._get_facebook_link_for_row(row)
+
+        info_items = [
             ("Fanpage", row["_page_name"]),
             ("Loại nội dung", CONTENT_TYPES.get(row.get("_type"), "Bài đăng")),
             ("Media", row.get("_media_path") or "Không có"),
@@ -1438,21 +1488,68 @@ class ScheduleWorkspaceView(QWidget):
             ("Trạng thái", STATE_LABELS.get(str(row.get("state")), str(row.get("state")))),
             ("Mã tác vụ", row["id"]),
             ("Mã nhóm", row.get("batch_id") or "—"),
-            ("Lỗi / Lý do", row.get("blocked_reason") or row.get("last_error_code") or "Không có"),
-        ):
-            line = QLabel(f"{key}: {val}")
-            line.setTextFormat(Qt.TextFormat.PlainText)
+        ]
+        if fb_link:
+            info_items.append(("Link Facebook", fb_link))
+        info_items.append(("Lỗi / Lý do", row.get("blocked_reason") or row.get("last_error_code") or "Không có"))
+
+        for key, val in info_items:
+            if key == "Link Facebook":
+                line = QLabel(f"<b>{key}:</b> <a href='{val}' style='color: #818CF8;'>{val}</a>")
+                line.setOpenExternalLinks(True)
+            else:
+                line = QLabel(f"{key}: {val}")
+                line.setTextFormat(Qt.TextFormat.PlainText)
             line.setWordWrap(True)
             layout.addWidget(line)
+
         layout.addWidget(QLabel("Nội dung bài viết"))
         caption_field = QPlainTextEdit()
         caption_field.setReadOnly(True)
         caption_field.setPlainText(row.get("_caption") or "(Bài không có chú thích)")
-        caption_field.setMinimumHeight(140)
+        caption_field.setMinimumHeight(120)
         layout.addWidget(caption_field)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+
+        btn_row = QHBoxLayout()
+        if fb_link:
+            btn_open_fb = QPushButton("🌐 Xem trên Facebook")
+            btn_open_fb.setStyleSheet("""
+                QPushButton {
+                    background-color: #6258E8;
+                    color: #FFFFFF;
+                    font-weight: 700;
+                    padding: 6px 14px;
+                    border-radius: 6px;
+                }
+                QPushButton:hover {
+                    background-color: #5348D6;
+                }
+            """)
+            btn_open_fb.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(fb_link)))
+            btn_row.addWidget(btn_open_fb)
+
+            btn_copy_fb = QPushButton("📋 Sao chép Link")
+            btn_copy_fb.setStyleSheet("""
+                QPushButton {
+                    background-color: #17243B;
+                    color: #CBD5E1;
+                    padding: 6px 14px;
+                    border: 1px solid #24344D;
+                    border-radius: 6px;
+                }
+                QPushButton:hover {
+                    background-color: #20314F;
+                    color: #FFFFFF;
+                }
+            """)
+            btn_copy_fb.clicked.connect(lambda: (QApplication.clipboard().setText(fb_link), QMessageBox.information(dialog, "Đã sao chép", f"Đã sao chép link Facebook:\n{fb_link}")))
+            btn_row.addWidget(btn_copy_fb)
+
+        btn_row.addStretch(1)
+        btn_close = QPushButton("Đóng")
+        btn_close.clicked.connect(dialog.reject)
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
         dialog.exec()
 
     def _perform_transition(self, job_id: str, new_state: str) -> bool:

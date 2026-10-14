@@ -165,7 +165,7 @@ class FacebookGraphClient:
         """Lấy thông tin chi tiết một Fanpage bằng Page Access Token."""
         url = self._url(f"/{page_id}")
         params = {
-            "fields": "id,name,category,picture,tasks",
+            "fields": "id,name,category,picture",
             "access_token": page_token,
         }
 
@@ -175,12 +175,14 @@ class FacebookGraphClient:
                 return None
 
             data = resp.json()
+            if not data.get("category"):
+                return None
             picture_url = data.get("picture", {}).get("data", {}).get("url", "")
             return FBPageItem(
                 page_id=str(data.get("id")),
                 name=str(data.get("name")),
                 access_token=page_token,
-                tasks=data.get("tasks", []),
+                tasks=data.get("tasks") or ["CREATE_CONTENT", "MANAGE"],
                 category=data.get("category", ""),
                 avatar_url=picture_url,
             )

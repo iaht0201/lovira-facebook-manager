@@ -16,6 +16,7 @@ Features:
 - Confirmation before queue insertion
 """
 
+import os
 import sys
 import hashlib
 import ipaddress
@@ -33,6 +34,7 @@ from PySide6.QtCore import (
     QDate, QTime, QDateTime,
     QThread, QTimer, QSignalBlocker
 )
+from PySide6.QtGui import QPixmap, QCursor
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -58,6 +60,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QTableWidget,
     QTableWidgetItem,
+    QMenu,
     QHeaderView,
     QAbstractItemView,
 )
@@ -1164,6 +1167,119 @@ class PostComposerView(QWidget):
 
         caption_box.addLayout(chips_bar)
         col2_layout.addLayout(caption_box)
+
+        # ----------------------------------------------
+        # First Comment Section (Affiliate Shopee / Mẫu cmt)
+        # ----------------------------------------------
+        cmt_section_box = QVBoxLayout()
+        cmt_section_box.setSpacing(6)
+
+        cmt_header = QHBoxLayout()
+        cmt_title = QLabel("Bình luận đầu tiên (First Comment)")
+        cmt_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #E2E8F0;")
+        cmt_header.addWidget(cmt_title)
+        cmt_header.addStretch()
+
+        self.btn_composer_pick_template = QPushButton("🛍 Chọn nhanh mẫu cmt / SP ▾")
+        self.btn_composer_pick_template.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_composer_pick_template.setStyleSheet("""
+            QPushButton {
+                background: #1E2D47;
+                color: #A5B4FC;
+                border: 1px solid #374B6E;
+                border-radius: 5px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #2A3C59;
+                color: #FFFFFF;
+                border: 1px solid #6258E8;
+            }
+        """)
+        self.btn_composer_pick_template.clicked.connect(self._open_quick_comment_menu)
+        cmt_header.addWidget(self.btn_composer_pick_template)
+
+        self.btn_composer_manage_templates = QPushButton("⚙ Quản lý...")
+        self.btn_composer_manage_templates.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_composer_manage_templates.setStyleSheet("""
+            QPushButton {
+                background: #17243B;
+                color: #94A3B8;
+                border: 1px solid #2B3D59;
+                border-radius: 5px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background: #20314F;
+                color: #E2E8F0;
+            }
+        """)
+        self.btn_composer_manage_templates.clicked.connect(self._open_comment_template_manager)
+        cmt_header.addWidget(self.btn_composer_manage_templates)
+        cmt_section_box.addLayout(cmt_header)
+
+        self.comment_input = QTextEdit()
+        self.comment_input.setPlaceholderText("Nhập bình luận sẽ tự động gửi kèm ngay sau khi bài đăng/Reels được xuất bản (link affiliate Shopee, câu hỏi tương tác, coupon)...")
+        self.comment_input.setFixedHeight(70)
+        self.comment_input.setStyleSheet("""
+            QTextEdit {
+                background-color: #0E1626;
+                color: #F1F5F9;
+                border: 1px solid #1E293B;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 12px;
+            }
+            QTextEdit:focus {
+                border-color: #6258E8;
+            }
+        """)
+        self.comment_input.textChanged.connect(self._on_comment_text_changed)
+        cmt_section_box.addWidget(self.comment_input)
+
+        # Card xem trước sản phẩm Shopee đính kèm (Live Preview)
+        self.product_preview_frame = QFrame()
+        self.product_preview_frame.setObjectName("cardBox")
+        self.product_preview_frame.setStyleSheet("""
+            QFrame#cardBox {
+                background: #101B2E;
+                border: 1px solid #2C4263;
+                border-radius: 6px;
+                padding: 6px 10px;
+            }
+        """)
+        self.product_preview_frame.setVisible(False)
+        pv_box = QHBoxLayout(self.product_preview_frame)
+        pv_box.setContentsMargins(6, 4, 6, 4)
+        pv_box.setSpacing(10)
+
+        self.lbl_cmt_pv_thumb = QLabel()
+        self.lbl_cmt_pv_thumb.setFixedSize(44, 44)
+        self.lbl_cmt_pv_thumb.setStyleSheet("background: #1E293B; border-radius: 4px;")
+        pv_box.addWidget(self.lbl_cmt_pv_thumb)
+
+        pv_info = QVBoxLayout()
+        pv_info.setSpacing(2)
+        self.lbl_cmt_pv_title = QLabel()
+        self.lbl_cmt_pv_title.setStyleSheet("font-weight: 700; color: #F1F5F9; font-size: 12px;")
+        self.lbl_cmt_pv_sub = QLabel()
+        self.lbl_cmt_pv_sub.setStyleSheet("color: #34D399; font-size: 11px; font-weight: 600;")
+        pv_info.addWidget(self.lbl_cmt_pv_title)
+        pv_info.addWidget(self.lbl_cmt_pv_sub)
+        pv_box.addLayout(pv_info, stretch=1)
+
+        self.btn_remove_pv = QPushButton("✕ Bỏ")
+        self.btn_remove_pv.setToolTip("Ẩn thẻ xem trước này")
+        self.btn_remove_pv.setFixedSize(45, 26)
+        self.btn_remove_pv.setStyleSheet("background: #334155; color: #E2E8F0; border-radius: 4px; font-size: 11px;")
+        self.btn_remove_pv.clicked.connect(self._on_remove_product_preview)
+        pv_box.addWidget(self.btn_remove_pv)
+
+        cmt_section_box.addWidget(self.product_preview_frame)
+        col2_layout.addLayout(cmt_section_box)
 
         # ----------------------------------------------
         # Media Attachment Section
@@ -2436,6 +2552,9 @@ class PostComposerView(QWidget):
                 "composer_" + uuid.uuid4().hex[:16]
             )
 
+            cmt_text = self.comment_input.toPlainText().strip() if hasattr(self, "comment_input") else ""
+            first_cmt = cmt_text if cmt_text else None
+
             snapshots = []
 
             for pid in ids:
@@ -2459,6 +2578,7 @@ class PostComposerView(QWidget):
                         ),
                         scheduled_at_utc=scheduled_utc,
                         schedule_mode=ScheduleMode.LOCAL,
+                        first_comment=first_cmt,
                     )
                 )
 
@@ -2486,6 +2606,10 @@ class PostComposerView(QWidget):
 
             # Reset content after enqueue
             self.caption_input.clear()
+            if hasattr(self, "comment_input"):
+                self.comment_input.clear()
+            if hasattr(self, "product_preview_frame"):
+                self.product_preview_frame.setVisible(False)
             self.composer_state.page_overrides.clear()
             self._clear_attached_media()
             self._queue_preview()
@@ -2505,3 +2629,144 @@ class PostComposerView(QWidget):
         finally:
             self._submitting = False
             self._update_submit_button_label()
+
+    # -------------------------------------------------------------------------
+    # First Comment & Shopee Link Preview Helpers
+    # -------------------------------------------------------------------------
+
+    def _open_quick_comment_menu(self) -> None:
+        from src.lovira.storage.comment_repository import ReplyTemplateRepository
+        reply_repo = ReplyTemplateRepository.get_instance()
+        if not reply_repo and hasattr(self, "queue_repo") and hasattr(self.queue_repo, "db"):
+            reply_repo = ReplyTemplateRepository.get_instance(self.queue_repo.db)
+
+        if not reply_repo:
+            QMessageBox.information(self, "Thông báo", "Cơ sở dữ liệu mẫu câu chưa sẵn sàng.")
+            return
+
+        templates = reply_repo.list_templates()
+        if not templates:
+            reply = QMessageBox.question(
+                self,
+                "Chưa có mẫu câu / sản phẩm",
+                "Bạn chưa có mẫu câu bình luận nào. Bạn có muốn mở bảng Quản lý để thêm hoặc import mẫu câu?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._open_comment_template_manager()
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #131D2E;
+                border: 1px solid #2B3D59;
+                border-radius: 8px;
+                padding: 6px;
+                color: #F1F5F9;
+                font-size: 12px;
+                min-width: 260px;
+            }
+            QMenu::item {
+                padding: 8px 14px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #241E5C;
+                color: #A5B4FC;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #1E2D47;
+                margin: 4px 6px;
+            }
+        """)
+
+        act_manage = menu.addAction("⚙ Quản lý & Nhập danh sách mẫu câu...")
+        menu.addSeparator()
+
+        act_map = {}
+        for tpl in templates[:30]:
+            name = tpl.get("name") or "Mẫu câu"
+            price = tpl.get("price")
+            prefix = "🛍 " if tpl.get("product_url") else "💬 "
+            price_str = f" [{price}]" if price else ""
+            act = menu.addAction(f"{prefix}{name}{price_str}")
+            act_map[act] = tpl
+
+        chosen = menu.exec(QCursor.pos())
+        if chosen == act_manage:
+            self._open_comment_template_manager()
+        elif chosen in act_map:
+            self._apply_comment_template(act_map[chosen])
+
+    def _open_comment_template_manager(self) -> None:
+        from src.lovira.storage.comment_repository import ReplyTemplateRepository
+        from src.lovira.ui.views.comments_workspace import TemplateManagerDialog
+        reply_repo = ReplyTemplateRepository.get_instance()
+        if not reply_repo and hasattr(self, "queue_repo") and hasattr(self.queue_repo, "db"):
+            reply_repo = ReplyTemplateRepository.get_instance(self.queue_repo.db)
+
+        if not reply_repo:
+            QMessageBox.information(self, "Thông báo", "Cơ sở dữ liệu mẫu câu chưa sẵn sàng.")
+            return
+
+        dlg = TemplateManagerDialog(reply_repo, is_picker=True, parent=self)
+        dlg.template_selected.connect(self._apply_comment_template)
+        dlg.exec()
+
+    def _apply_comment_template(self, tpl: dict) -> None:
+        content = tpl.get("content") or ""
+        self.comment_input.setPlainText(content)
+
+        title = tpl.get("name") or ""
+        price = tpl.get("price") or ""
+        local_img = tpl.get("local_image_path") or ""
+        prod_url = tpl.get("product_url") or ""
+
+        if prod_url or local_img or title:
+            self._show_comment_product_preview(title=title, price=price, local_image_path=local_img, url=prod_url)
+
+    def _show_comment_product_preview(self, title: str, price: str, local_image_path: str, url: str) -> None:
+        self.product_preview_frame.setVisible(True)
+        self.lbl_cmt_pv_title.setText(title or url)
+        self.lbl_cmt_pv_sub.setText(f"Giá: {price}" if price else "Sản phẩm Shopee đính kèm")
+
+        if local_image_path and os.path.exists(local_image_path):
+            pix = QPixmap(local_image_path)
+            if not pix.isNull():
+                self.lbl_cmt_pv_thumb.setPixmap(
+                    pix.scaled(44, 44, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                )
+
+    def _on_comment_text_changed(self) -> None:
+        text = self.comment_input.toPlainText()
+        from src.lovira.services.link_preview import LinkPreviewService
+        srv = LinkPreviewService.get_instance()
+        urls = srv.extract_urls(text)
+        if urls and not self.product_preview_frame.isVisible():
+            first_url = urls[0]
+            if srv.is_shopee_url(first_url):
+                QTimer.singleShot(400, lambda: self._scan_composer_comment_link(first_url))
+
+    def _scan_composer_comment_link(self, url: str) -> None:
+        from src.lovira.services.link_preview import AsyncLinkPreviewWorker
+        if hasattr(self, "_active_preview_worker") and self._active_preview_worker and self._active_preview_worker.isRunning():
+            return
+        worker = AsyncLinkPreviewWorker(url)
+        self._active_preview_worker = worker
+
+        def _on_ready(info):
+            self._show_comment_product_preview(
+                title=info.get("title") or url,
+                price=info.get("price") or "",
+                local_image_path=info.get("local_image_path") or "",
+                url=url
+            )
+
+        worker.preview_ready.connect(_on_ready)
+        worker.start()
+
+    def _on_remove_product_preview(self) -> None:
+        self.product_preview_frame.setVisible(False)
+

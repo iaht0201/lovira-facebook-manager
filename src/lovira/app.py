@@ -112,17 +112,34 @@ def create_application() -> MainWindow:
         from src.lovira.licensing.supabase_adapter import SupabaseAdapter
         license_backend = SupabaseAdapter(supabase_url=supabase_url, anon_key=supabase_key)
         logger.info("Đã cấu hình Supabase License Backend từ biến môi trường.")
+        policy_manager = AccessPolicyManager()
     else:
         from src.lovira.licensing.client import OfflineFallbackLicenseBackend
+        from src.lovira.licensing.policy import RemoteAppConfig
         license_backend = OfflineFallbackLicenseBackend()
         logger.info("Chưa có cấu hình Supabase Server; khởi động chế độ Offline/Cục bộ an toàn.")
+        dev_config = RemoteAppConfig(
+            license_required=False,
+            expires_at_utc="2099-12-31T23:59:59Z",
+            free_features={
+                "view_local_data": True,
+                "compose_drafts": True,
+                "save_draft": True,
+                "export_backup": True,
+                "download_video": True,
+                "publish_post": True,
+                "publish_reels": True,
+                "sync_facebook": True,
+                "post_comment": True,
+            },
+        )
+        policy_manager = AccessPolicyManager(config=dev_config)
 
     license_client = LicenseClient(
         backend=license_backend,
         device_id=device_id,
         fingerprint=fingerprint,
     )
-    policy_manager = AccessPolicyManager()
 
     # 5. Khôi phục tác vụ mồ côi sau crash (AC-14)
     recovery_manager = RecoveryManager(db_manager, queue_repo, page_repo, fb_client)

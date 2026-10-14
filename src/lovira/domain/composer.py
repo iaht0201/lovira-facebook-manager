@@ -49,6 +49,8 @@ class ContentSnapshot:
     timezone: str = "Asia/Ho_Chi_Minh"
     revision: int = 1
     created_at_utc: str = ""
+    title: Optional[str] = None
+    first_comment: Optional[str] = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -58,7 +60,15 @@ class ContentSnapshot:
         data = json.loads(json_str)
         data["content_type"] = ContentType(data["content_type"])
         data["schedule_mode"] = ScheduleMode(data["schedule_mode"])
-        return cls(**data)
+        # Chỉ truyền các thuộc tính hợp lệ
+        valid_keys = {
+            "batch_id", "page_id", "content_type", "final_caption",
+            "primary_media_id", "media_checksum", "media_path",
+            "scheduled_at_utc", "schedule_mode", "timezone",
+            "revision", "created_at_utc", "title", "first_comment"
+        }
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered)
 
 
 @dataclass

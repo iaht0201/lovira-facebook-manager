@@ -18,6 +18,27 @@ class MediaRepository:
 
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
+        self._ensure_columns()
+
+    def _ensure_columns(self) -> None:
+        """Đảm bảo các cột title, hashtags, target_page_id, caption, first_comment tồn tại trong bảng media_assets."""
+        try:
+            with self.db.transaction() as conn:
+                cursor = conn.execute("PRAGMA table_info(media_assets);")
+                columns = [row[1] for row in cursor.fetchall()]
+                if columns:
+                    if "title" not in columns:
+                        conn.execute("ALTER TABLE media_assets ADD COLUMN title TEXT;")
+                    if "hashtags" not in columns:
+                        conn.execute("ALTER TABLE media_assets ADD COLUMN hashtags TEXT;")
+                    if "target_page_id" not in columns:
+                        conn.execute("ALTER TABLE media_assets ADD COLUMN target_page_id TEXT;")
+                    if "caption" not in columns:
+                        conn.execute("ALTER TABLE media_assets ADD COLUMN caption TEXT;")
+                    if "first_comment" not in columns:
+                        conn.execute("ALTER TABLE media_assets ADD COLUMN first_comment TEXT;")
+        except Exception:
+            pass
 
     def add_media_asset(
         self,
@@ -32,17 +53,21 @@ class MediaRepository:
         height: Optional[int] = None,
         thumbnail_path: Optional[Path] = None,
         tags: Optional[str] = None,
+        title: Optional[str] = None,
+        hashtags: Optional[str] = None,
+        target_page_id: Optional[str] = None,
     ) -> str:
         """Thêm mới một tài sản media vào cơ sở dữ liệu."""
         asset_id = f"med_{uuid.uuid4().hex[:12]}"
+        self._ensure_columns()
         with self.db.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO media_assets (
                     id, source_platform, source_id, source_url, local_path,
                     checksum, duration, width, height, size_bytes,
-                    thumbnail_path, tags
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    thumbnail_path, tags, title, hashtags, target_page_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     asset_id,
@@ -57,9 +82,68 @@ class MediaRepository:
                     size_bytes,
                     str(thumbnail_path) if thumbnail_path else None,
                     tags,
+                    title,
+                    hashtags,
+                    target_page_id,
                 ),
             )
         return asset_id
+
+    def update_target_page(self, asset_id: str, page_id: Optional[str]) -> None:
+        """Cập nhật Fanpage đích gán cho video."""
+        self._ensure_columns()
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE media_assets SET target_page_id = ? WHERE id = ?;", (page_id, asset_id))
+
+    def update_metadata(
+        self,
+        asset_id: str,
+        title: Optional[str] = None,
+        hashtags: Optional[str] = None,
+        caption: Optional[str] = None,
+        first_comment: Optional[str] = None,
+        target_page_id: Optional[str] = None,
+    ) -> None:
+        """Cập nhật tiêu đề, hashtags, caption, bình luận và fanpage đích cho video."""
+        self._ensure_columns()
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE media_assets 
+                SET title = COALESCE(?, title), 
+                    hashtags = COALESCE(?, hashtags),
+                    caption = COALESCE(?, caption),
+                    first_comment = COALESCE(?, first_comment),
+                    target_page_id = COALESCE(?, target_page_id)
+                WHERE id = ?;
+                """,
+                (title, hashtags, caption, first_comment, target_page_id, asset_id),
+            )
+
+    def update_asset_full_metadata(
+        self,
+        asset_id: str,
+        title: str = "",
+        caption: str = "",
+        hashtags: str = "",
+        first_comment: str = "",
+        target_page_id: Optional[str] = None,
+    ) -> None:
+        """Cập nhật toàn diện thông tin chỉnh sửa video từ hộp thoại."""
+        self._ensure_columns()
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE media_assets
+                SET title = ?,
+                    caption = ?,
+                    hashtags = ?,
+                    first_comment = ?,
+                    target_page_id = ?
+                WHERE id = ?;
+                """,
+                (title, caption, hashtags, first_comment, target_page_id, asset_id),
+            )
 
     def get_media_asset(self, asset_id: str) -> Optional[Dict[str, Any]]:
         """Lấy thông tin chi tiết một media asset."""
